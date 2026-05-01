@@ -11,10 +11,16 @@ interface TokenCache {
 }
 
 export function createZunosClient(cfg: Config): ZunosClient {
-  if (!cfg.zunosBaseUrl || !cfg.zunosClientId || !cfg.zunosClientSecret) {
-    throw new Error(
-      'Zunos config missing: set ZUNOS_BASE_URL, ZUNOS_CLIENT_ID, ZUNOS_CLIENT_SECRET',
-    );
+  // Zunos is optional. When the credentials aren't set, every lookup
+  // returns null and the quote flow falls back to using the raw part
+  // number as the description.
+  const configured = !!(cfg.zunosBaseUrl && cfg.zunosClientId && cfg.zunosClientSecret);
+  if (!configured) {
+    return {
+      async searchPart() {
+        return null;
+      },
+    };
   }
   let token: TokenCache | null = null;
 
