@@ -85,11 +85,23 @@ export function createEpanClient(cfg: Config): EpanClient {
   return {
     async lookup(sku) {
       return withSession(async (page) => {
-        await navigateToScreen(page, SELECTORS.navItemOrderEnquiry, 'DLPR002');
+        try {
+          await navigateToScreen(page, SELECTORS.navItemOrderEnquiry, 'DLPR002');
+        } catch (err) {
+          await dumpDiagnostics(page, 'lookup-no-DLPR002');
+          throw err;
+        }
 
         await page.fill(SELECTORS.itemNumberInput, sku.toUpperCase());
         await page.click(SELECTORS.stockEnquiryBtn);
-        if (!(await waitForScreen(page, 'DLPR501'))) return null;
+        if (!(await waitForScreen(page, 'DLPR501'))) {
+          await dumpDiagnostics(page, 'lookup-no-DLPR501');
+          console.error(
+            `[epan.lookup] never reached DLPR501 after PF13 for sku ${sku}. ` +
+              `See /tmp/epan-debug-lookup-no-DLPR501.png`,
+          );
+          return null;
+        }
 
         const priceText = (await page.textContent(SELECTORS.productPrice).catch(() => '')) ?? '';
         const stockText = (await page.textContent(SELECTORS.productStock).catch(() => '')) ?? '';
@@ -97,7 +109,16 @@ export function createEpanClient(cfg: Config): EpanClient {
           (await page.inputValue(SELECTORS.productInternalId).catch(() => '')) || sku.toUpperCase();
 
         const price = parsePrice(priceText);
-        if (!isFinite(price) || price === 0) return null;
+        if (!isFinite(price) || price === 0) {
+          await dumpDiagnostics(page, 'lookup-bad-price');
+          console.error(
+            `[epan.lookup] reached DLPR501 but could not parse a valid price. ` +
+              `priceText=${JSON.stringify(priceText)}, stockText=${JSON.stringify(stockText)}, ` +
+              `internalId=${JSON.stringify(internalId)}. ` +
+              `See /tmp/epan-debug-lookup-bad-price.png`,
+          );
+          return null;
+        }
 
         return {
           internalId: internalId.trim(),
