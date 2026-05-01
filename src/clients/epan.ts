@@ -13,34 +13,56 @@ export interface EpanClient {
   }): Promise<EpanOrderResult>;
 }
 
-// Selectors are kept in one place so UI changes are a single-file fix.
-// These are placeholders that must be tuned against the live EPAN portal
-// during the EPAN smoke test step from the plan.
+// Panasonic e-Pan is a HATS (Host Access Transformation Services) terminal-
+// emulation skin over an AS/400. The whole app lives at one URL (/epan/entry)
+// and screens are distinguished by short page codes (HEPR010 home, DLPR002
+// item/order enquiry, DLPR501 item detail, OEPR002 order header, OEPR003
+// order lines, OEPR100 order detail). Field names are positional
+// (in_<cursorPos>_<fieldLength>) and stable per screen layout.
+//
+// All selectors below were captured against the live portal with Claude for
+// Chrome. If the page layout changes, every selector is in this one const.
 const SELECTORS = {
-  loginUser: 'input[name="username"]',
-  loginPass: 'input[name="password"]',
-  loginSubmit: 'button[type="submit"]',
-  loginSuccessIndicator: 'a[href*="logout"]',
-  searchInput: 'input[name="search"]',
-  searchSubmit: 'button[name="searchSubmit"]',
-  productLink: 'a.product-tile',
-  productPrice: '[data-test="price"]',
-  productStock: '[data-test="stock"]',
-  productInternalId: '[data-product-id]',
-  qtyInput: 'input[name="qty"]',
-  addToCartBtn: 'button.add-to-cart',
-  cartLink: 'a[href*="/cart"]',
-  checkoutBtn: 'button.checkout',
-  poReferenceInput: 'input[name="customer_reference"]',
-  placeOrderBtn: 'button.place-order',
-  orderConfirmRef: '[data-test="order-reference"]',
-  orderHistoryLink: 'a[href*="/orders"]',
-  orderHistoryRow: 'tr.order-row',
-  orderHistoryRef: '[data-test="reference"]',
-  orderHistoryEpanRef: '[data-test="epan-ref"]',
+  // Login page
+  loginUser: "input[name='in_1319_10']",
+  loginPass: "input[type='password']",
+  loginSubmit: "input[name='[enter]'][class='TealHostButton']",
+  loginSuccessIndicator: "a[name='OFF']",
+
+  // Home menu (HEPR010) — entry points to the two flows we care about
+  navOrderEntry: "a[name='DC202']", // → OEPR002 (order header)
+  navItemOrderEnquiry: "a[name='DC211']", // → DLPR002 (item / order search)
+
+  // Item / Order Enquiry (DLPR002)
+  itemNumberInput: "input[name='in_335_20']",
+  stockEnquiryBtn: "input[name='[pf13]']", // takes us to DLPR501
+
+  // Item Detail (DLPR501)
+  productPrice: "tr:nth-child(11) td.HGREEN[colspan='11']:first-of-type",
+  productStock: "td.HCYAN[colspan='8']",
+  productInternalId: "input[name='in_248_20']",
+
+  // Order Header (OEPR002)
+  customerOrderNumberInput: "input[name='in_995_40']",
+
+  // Order Lines / "cart" (OEPR003)
+  lineItemInput: "input[name='in_728_20']",
+  lineQtyInput: "input[name='in_749_8']",
+  enterBtn: "input[name='[enter]'][class='TealHostButton']",
+  confirmTotalOrderBtn: "input[name='[pf3]'][value='Confirm TOTAL Order']",
+
+  // Order Detail / confirmation (OEPR100)
+  confirmRefPrefix: "input[name='in_174_1']",
+  confirmRefNumber: "input[name='in_176_7']",
+
+  // Order history rows on DLPR002
+  orderHistoryRow: "tr:has(select.HATSDROPDOWN option[value='5'])",
+  orderHistoryCustomerRefCell: "td.HGREEN[colspan='15']",
+  orderHistoryPaRefCell: "td.HGREEN[colspan='8']",
 };
 
 const COOKIE_PATH = '/tmp/epan-cookies.json';
+const SCREEN_TIMEOUT_MS = 30_000;
 
 export function createEpanClient(cfg: Config): EpanClient {
   async function withSession<T>(fn: (page: Page) => Promise<T>): Promise<T> {
@@ -57,54 +79,77 @@ export function createEpanClient(cfg: Config): EpanClient {
   return {
     async lookup(sku) {
       return withSession(async (page) => {
-        await page.fill(SELECTORS.searchInput, sku);
-        await page.click(SELECTORS.searchSubmit);
-        await page.waitForLoadState('networkidle');
+        await navigateToScreen(page, SELECTORS.navItemOrderEnquiry, 'DLPR002');
 
-        const link = await page.$(SELECTORS.productLink);
-        if (!link) return null;
-        await link.click();
-        await page.waitForLoadState('networkidle');
+        await page.fill(SELECTORS.itemNumberInput, sku.toUpperCase());
+        await page.click(SELECTORS.stockEnquiryBtn);
+        if (!(await waitForScreen(page, 'DLPR501'))) return null;
 
-        const priceText = (await page.textContent(SELECTORS.productPrice)) ?? '';
-        const stockText = (await page.textContent(SELECTORS.productStock)) ?? '';
+        const priceText = (await page.textContent(SELECTORS.productPrice).catch(() => '')) ?? '';
+        const stockText = (await page.textContent(SELECTORS.productStock).catch(() => '')) ?? '';
         const internalId =
-          (await page.getAttribute(SELECTORS.productInternalId, 'data-product-id')) ?? '';
+          (await page.inputValue(SELECTORS.productInternalId).catch(() => '')) || sku.toUpperCase();
+
+        const price = parsePrice(priceText);
+        if (!isFinite(price) || price === 0) return null;
 
         return {
-          internalId,
+          internalId: internalId.trim(),
           productUrl: page.url(),
-          price: parsePrice(priceText),
+          price,
           stock: parseStock(stockText),
-          currency: detectCurrency(priceText),
+          currency: 'AUD',
         };
       });
     },
 
     async placeOrder({ internalId, qty, jobReference }) {
+      // Idempotency check first — runs in its own session so navigation can't
+      // collide with the order-entry session below.
+      const existing = await withSession((page) =>
+        findOrderByCustomerRef(page, jobReference),
+      ).catch((err) => {
+        console.error('EPAN idempotency check failed (continuing)', err);
+        return null;
+      });
+      if (existing) {
+        return { epanOrderRef: existing, alreadyPlaced: true };
+      }
+
       return withSession(async (page) => {
-        // Idempotency: if an order with this reference already exists, short-circuit.
-        const existing = await findOrderByReference(page, cfg, jobReference);
-        if (existing) return { epanOrderRef: existing, alreadyPlaced: true };
+        // 1. Order Entry → OEPR002 (header)
+        await navigateToScreen(page, SELECTORS.navOrderEntry, 'OEPR002');
 
-        await page.goto(`${cfg.epanBaseUrl}/product/${encodeURIComponent(internalId)}`);
+        // 2. Stamp the customer order number with our SM8 job reference
+        //    (the field accepts up to 40 chars; SM8 UUIDs are 36).
+        await page.fill(SELECTORS.customerOrderNumberInput, jobReference);
+        await page.click(SELECTORS.enterBtn);
+
+        // 3. Wait for OEPR003 (line entry)
+        if (!(await waitForScreen(page, 'OEPR003'))) {
+          throw new Error('EPAN: did not reach OEPR003 line-entry screen');
+        }
+
+        // 4. Add the line: item number + qty, then submit
+        await page.fill(SELECTORS.lineItemInput, internalId.toUpperCase());
+        await page.fill(SELECTORS.lineQtyInput, String(qty));
+        await page.click(SELECTORS.enterBtn);
         await page.waitForLoadState('networkidle');
 
-        await page.fill(SELECTORS.qtyInput, String(qty));
-        await page.click(SELECTORS.addToCartBtn);
-        await page.click(SELECTORS.cartLink);
-        await page.waitForLoadState('networkidle');
+        // 5. Confirm the whole order (PF3) — this is the real "place order"
+        await page.click(SELECTORS.confirmTotalOrderBtn);
 
-        await page.click(SELECTORS.checkoutBtn);
-        await page.waitForLoadState('networkidle');
-
-        await page.fill(SELECTORS.poReferenceInput, jobReference);
-        await page.click(SELECTORS.placeOrderBtn);
-        await page.waitForLoadState('networkidle');
-
-        const ref = (await page.textContent(SELECTORS.orderConfirmRef))?.trim();
-        if (!ref) throw new Error('EPAN: order placed but no confirmation reference scraped');
-        return { epanOrderRef: ref, alreadyPlaced: false };
+        // 6. Wait for the confirmation screen and read the PA Ref
+        if (!(await waitForScreen(page, 'OEPR100'))) {
+          throw new Error('EPAN: order submitted but OEPR100 confirmation never appeared');
+        }
+        const prefix = (await page.inputValue(SELECTORS.confirmRefPrefix).catch(() => '')) ?? '';
+        const number = (await page.inputValue(SELECTORS.confirmRefNumber).catch(() => '')) ?? '';
+        const epanOrderRef = `${prefix.trim()}${number.trim()}`;
+        if (!epanOrderRef) {
+          throw new Error('EPAN: order placed but PA Ref could not be read from OEPR100');
+        }
+        return { epanOrderRef, alreadyPlaced: false };
       });
     },
   };
@@ -133,7 +178,7 @@ async function openSession(cfg: Config): Promise<{
   await page.waitForLoadState('networkidle');
 
   if (!(await page.$(SELECTORS.loginSuccessIndicator))) {
-    await page.fill(SELECTORS.loginUser, cfg.epanUsername);
+    await page.fill(SELECTORS.loginUser, cfg.epanUsername.toUpperCase());
     await page.fill(SELECTORS.loginPass, cfg.epanPassword);
     await page.click(SELECTORS.loginSubmit);
     await page.waitForLoadState('networkidle');
@@ -154,22 +199,49 @@ async function persistCookies(context: BrowserContext): Promise<void> {
   }
 }
 
-async function findOrderByReference(
-  page: Page,
-  cfg: Config,
-  reference: string,
-): Promise<string | null> {
-  await page.goto(`${cfg.epanBaseUrl}/orders`);
-  await page.waitForLoadState('networkidle');
+// Click a home-menu link and wait for the expected screen code to render.
+// Assumes the session is currently sitting on HEPR010 (post-login home).
+async function navigateToScreen(page: Page, linkSelector: string, screenCode: string): Promise<void> {
+  await page.click(linkSelector);
+  if (!(await waitForScreen(page, screenCode))) {
+    throw new Error(`EPAN: did not reach screen ${screenCode}`);
+  }
+}
+
+// Wait for a HATS screen code to appear anywhere on the page. HATS swaps
+// the body content in place rather than navigating, so we have to poll for
+// the marker rather than relying on URL changes.
+async function waitForScreen(page: Page, code: string): Promise<boolean> {
+  try {
+    await page.locator(`text=${code}`).first().waitFor({ timeout: SCREEN_TIMEOUT_MS });
+    await page.waitForLoadState('networkidle').catch(() => undefined);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Scan DLPR002 for an existing order whose Customer Order Number matches
+// our SM8 job UUID. Returns the EPAN PA Ref if found, else null.
+async function findOrderByCustomerRef(page: Page, reference: string): Promise<string | null> {
+  await navigateToScreen(page, SELECTORS.navItemOrderEnquiry, 'DLPR002');
+
   const rows = await page.$$(SELECTORS.orderHistoryRow);
   for (const row of rows) {
-    const ref = (await row.$eval(SELECTORS.orderHistoryRef, (el) => el.textContent ?? '')).trim();
-    if (ref === reference) {
-      const epanRef = (
-        await row.$eval(SELECTORS.orderHistoryEpanRef, (el) => el.textContent ?? '')
-      ).trim();
-      return epanRef || ref;
+    const cells = await row.$$(SELECTORS.orderHistoryCustomerRefCell);
+    let matched = false;
+    for (const cell of cells) {
+      const text = ((await cell.textContent()) ?? '').trim();
+      if (text === reference) {
+        matched = true;
+        break;
+      }
     }
+    if (!matched) continue;
+    const paCell = await row.$(SELECTORS.orderHistoryPaRefCell);
+    const paRef = ((await paCell?.textContent()) ?? '').trim();
+    if (paRef) return paRef;
+    return reference; // fallback: at least we know it's already placed
   }
   return null;
 }
@@ -186,13 +258,6 @@ function parseStock(text: string): number {
   return parseInt(m[1]!, 10);
 }
 
-function detectCurrency(text: string): string {
-  if (text.includes('$')) return 'AUD';
-  if (text.includes('£')) return 'GBP';
-  if (text.includes('€')) return 'EUR';
-  return 'AUD';
-}
-
 // Lazy-load chromium only when actually opening a browser, so tests that
 // stub the EpanClient don't need to install playwright.
 async function loadChromium(): Promise<{ chromium: typeof import('playwright-core').chromium }> {
@@ -202,13 +267,11 @@ async function loadChromium(): Promise<{ chromium: typeof import('playwright-cor
     const exec = await sparticuz.default.executablePath();
     const args = sparticuz.default.args;
     const launchOptions = { args, executablePath: exec, headless: true } as const;
-    // Wrap chromium.launch so callers don't need to pass args.
     const wrapped = {
       ...chromium,
       launch: (opts: Parameters<typeof chromium.launch>[0] = {}) =>
         chromium.launch({ ...launchOptions, ...opts }),
     } as typeof chromium;
-    // The path/join import is here to keep formatters happy if used later.
     void join;
     return { chromium: wrapped };
   }

@@ -97,4 +97,16 @@ curl -u "$SM8_API_KEY:x" \
 - One part per `order` note — multi-line orders are not parsed.
 - Confirmer cannot say "no" — the To-Do is just left open. A `cancel order` keyword can be added later.
 - Failures rely on SM8 webhook retries; there's no internal queue.
-- EPAN selectors in `src/clients/epan.ts` are placeholders and must be tuned against the live portal during the smoke-test step.
+
+## Notes on the EPAN integration
+
+EPAN is **Panasonic e-Pan**, a HATS (Host Access Transformation Services) terminal-emulation skin in front of an AS/400 mainframe. It is *not* a normal e-commerce site:
+
+- The whole app lives at one URL (`/epan/entry`); screens are distinguished by short page codes (HEPR010 home, DLPR002 enquiry, DLPR501 item detail, OEPR002 order header, OEPR003 order lines, OEPR100 order detail).
+- Field names are positional (`in_<cursorPos>_<fieldLength>`) and stable per screen layout.
+- Buttons map to PF keys (`[enter]`, `[pf3]`, `[pf13]` etc.).
+- There is **no traditional cart**. Orders are entered in two phases: header (OEPR002 — sets the customer reference / our SM8 job UUID), then lines (OEPR003 — add item + qty, then `Confirm TOTAL Order` aka PF3 places the order).
+- The order ref returned to us is `<prefix><7-digit number>` from two read-only inputs on OEPR100 (e.g. `S1910760`).
+- Idempotency check scans DLPR002 for any existing row whose Customer Order Number cell matches our SM8 job UUID before placing a new order.
+
+If Panasonic ever re-skins e-Pan, every selector lives in the `SELECTORS` const at the top of `src/clients/epan.ts`.
