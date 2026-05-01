@@ -1,8 +1,8 @@
 node_modules/
 dist/
-.aws-sam/
 .env
 .env.local
+local.settings.json
 *.log
 coverage/
 .DS_Store

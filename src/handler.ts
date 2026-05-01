@@ -1,8 +1,4 @@
-import type {
-  APIGatewayProxyEventV2,
-  APIGatewayProxyResultV2,
-  Context,
-} from 'aws-lambda';
+import { app, type HttpRequest, type HttpResponseInit, type InvocationContext } from '@azure/functions';
 import { classifyNote } from './classify.js';
 import { createEpanClient } from './clients/epan.js';
 import { createServiceM8Client } from './clients/servicem8.js';
@@ -13,47 +9,43 @@ import { runQuote } from './flows/quote.js';
 import { createStore } from './store.js';
 import type { Sm8WebhookPayload } from './types.js';
 
-export async function handler(
-  event: APIGatewayProxyEventV2,
-  context: Context,
-): Promise<APIGatewayProxyResultV2> {
-  context.callbackWaitsForEmptyEventLoop = false;
-
+export async function sm8Webhook(
+  request: HttpRequest,
+  context: InvocationContext,
+): Promise<HttpResponseInit> {
   const cfg = await loadConfig();
   const sm8 = createServiceM8Client(cfg);
 
-  const rawBody = event.isBase64Encoded
-    ? Buffer.from(event.body ?? '', 'base64').toString('utf8')
-    : (event.body ?? '');
+  const rawBody = await request.text();
 
   const sigHeader =
-    event.headers?.['x-servicem8-signature'] ??
-    event.headers?.['X-ServiceM8-Signature'] ??
-    event.headers?.['x-signature'];
+    request.headers.get('x-servicem8-signature') ??
+    request.headers.get('x-signature') ??
+    undefined;
 
   if (!sm8.verifyWebhook(sigHeader, rawBody)) {
-    return { statusCode: 401, body: 'invalid signature' };
+    return { status: 401, body: 'invalid signature' };
   }
 
   let payload: Sm8WebhookPayload;
   try {
     payload = JSON.parse(rawBody) as Sm8WebhookPayload;
   } catch {
-    return { statusCode: 400, body: 'invalid json' };
+    return { status: 400, body: 'invalid json' };
   }
 
   if (!payload.job_uuid || !payload.body) {
-    return { statusCode: 200, body: 'ignored: missing job_uuid or body' };
+    return { status: 200, body: 'ignored: missing job_uuid or body' };
   }
 
   const decision = classifyNote(payload.body);
   if (decision.kind === 'ignore') {
-    return { statusCode: 200, body: 'ignored' };
+    return { status: 200, body: 'ignored' };
   }
 
   const zunos = createZunosClient(cfg);
   const epan = createEpanClient(cfg);
-  const store = createStore(cfg.pendingOrdersTable);
+  const store = createStore(cfg.storageAccountName, cfg.pendingOrdersTable);
 
   try {
     if (decision.kind === 'quote') {
@@ -72,9 +64,9 @@ export async function handler(
         { jobUuid: payload.job_uuid },
       );
     }
-    return { statusCode: 200, body: 'ok' };
+    return { status: 200, body: 'ok' };
   } catch (err) {
-    console.error('flow failed', err);
+    context.error('flow failed', err);
     await sm8
       .postNote(
         payload.job_uuid,
@@ -82,6 +74,13 @@ export async function handler(
         cfg.sm8BotStaffUuid,
       )
       .catch(() => undefined);
-    return { statusCode: 500, body: 'flow failed' };
+    return { status: 500, body: 'flow failed' };
   }
 }
+
+app.http('sm8Webhook', {
+  methods: ['POST'],
+  authLevel: 'anonymous',
+  route: 'sm8/webhook',
+  handler: sm8Webhook,
+});

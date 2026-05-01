@@ -1,4 +1,5 @@
-import { GetParametersByPathCommand, SSMClient } from '@aws-sdk/client-ssm';
+import { DefaultAzureCredential } from '@azure/identity';
+import { SecretClient } from '@azure/keyvault-secrets';
 
 export interface Config {
   sm8ApiKey: string;
@@ -12,9 +13,31 @@ export interface Config {
   epanUsername: string;
   epanPassword: string;
   pendingOrdersTable: string;
+  storageAccountName: string;
 }
 
 let cached: Config | null = null;
+
+// Plain-text config keys (read straight from env, never from Key Vault).
+const PLAIN_KEYS = [
+  'ZUNOS_BASE_URL',
+  'ZUNOS_SEARCH_PATH',
+  'EPAN_BASE_URL',
+  'PENDING_ORDERS_TABLE',
+  'STORAGE_ACCOUNT_NAME',
+  'SM8_BOT_STAFF_UUID',
+] as const;
+
+// Secret config keys. Loaded from Key Vault by default; falls back to env
+// for local dev (set LOCAL_DEV=true to skip Key Vault entirely).
+const SECRET_KEYS = [
+  'SM8_API_KEY',
+  'SM8_WEBHOOK_SECRET',
+  'ZUNOS_CLIENT_ID',
+  'ZUNOS_CLIENT_SECRET',
+  'EPAN_USERNAME',
+  'EPAN_PASSWORD',
+] as const;
 
 const KEY_MAP: Record<string, keyof Config> = {
   SM8_API_KEY: 'sm8ApiKey',
@@ -28,48 +51,41 @@ const KEY_MAP: Record<string, keyof Config> = {
   EPAN_USERNAME: 'epanUsername',
   EPAN_PASSWORD: 'epanPassword',
   PENDING_ORDERS_TABLE: 'pendingOrdersTable',
+  STORAGE_ACCOUNT_NAME: 'storageAccountName',
 };
 
 export async function loadConfig(): Promise<Config> {
   if (cached) return cached;
 
-  // In tests / local dev: read straight from process.env.
-  if (process.env.SM8_API_KEY) {
-    cached = readFromEnv();
-    return cached;
+  const params: Record<string, string> = {};
+
+  // Plain settings always come from env (Function App app-settings or .env).
+  for (const k of PLAIN_KEYS) {
+    params[k] = process.env[k] ?? '';
   }
 
-  const prefix = process.env.SSM_PREFIX ?? '/sm8-part-bot';
-  const client = new SSMClient({});
-  const params: Record<string, string> = {};
-  let nextToken: string | undefined;
-  do {
-    const out = await client.send(
-      new GetParametersByPathCommand({
-        Path: prefix,
-        WithDecryption: true,
-        Recursive: false,
-        NextToken: nextToken,
-      }),
-    );
-    for (const p of out.Parameters ?? []) {
-      if (!p.Name || p.Value === undefined) continue;
-      const short = p.Name.slice(prefix.length).replace(/^\//, '');
-      params[short] = p.Value;
+  // Secrets: Key Vault in cloud, env in local dev.
+  const localDev = process.env.LOCAL_DEV === 'true' || !process.env.KEY_VAULT_URL;
+  if (localDev) {
+    for (const k of SECRET_KEYS) {
+      params[k] = process.env[k] ?? '';
     }
-    nextToken = out.NextToken;
-  } while (nextToken);
+  } else {
+    const vaultUrl = process.env.KEY_VAULT_URL!;
+    const client = new SecretClient(vaultUrl, new DefaultAzureCredential());
+    for (const k of SECRET_KEYS) {
+      const secretName = k.replace(/_/g, '-').toLowerCase();
+      try {
+        const secret = await client.getSecret(secretName);
+        params[k] = secret.value ?? '';
+      } catch (err) {
+        throw new Error(`Failed to read secret ${secretName} from Key Vault: ${err}`);
+      }
+    }
+  }
 
   cached = mapParams(params);
   return cached;
-}
-
-function readFromEnv(): Config {
-  const params: Record<string, string> = {};
-  for (const k of Object.keys(KEY_MAP)) {
-    params[k] = process.env[k] ?? '';
-  }
-  return mapParams(params);
 }
 
 function mapParams(params: Record<string, string>): Config {

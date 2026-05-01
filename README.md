@@ -1,6 +1,6 @@
 # sm8-part-bot
 
-ServiceM8 → Zunos → EPAN automated part-order workflow.
+ServiceM8 → Zunos → EPAN automated part-order workflow, deployed on Azure.
 
 ## What it does
 
@@ -12,91 +12,120 @@ When a tech adds a note on a ServiceM8 job:
 | `yes please order this part on EPAN`     | Places the previously-quoted order on EPAN, closes the To-Do, and posts a confirmation note with the EPAN order reference. |
 | Anything else                            | Ignored.                                                          |
 
-State for the two-step flow lives in a DynamoDB table keyed on `job_uuid`.
+State for the two-step flow lives in an Azure Table Storage table keyed on `job_uuid`.
 
 ## Architecture
 
 ```
-ServiceM8 webhook → API Gateway → Lambda (Node 20)
-                                   ├─ Bigtincan Zunos (REST + OAuth2)
-                                   ├─ EPAN portal     (Playwright + @sparticuz/chromium)
-                                   ├─ ServiceM8 API   (REST)
-                                   └─ DynamoDB        (pending_orders, TTL 30d)
-Secrets → AWS SSM Parameter Store under /sm8-part-bot/*
+ServiceM8 webhook → Azure Functions (Node 20)
+                     ├─ Bigtincan Zunos     (REST + OAuth2)
+                     ├─ EPAN portal         (Playwright + @sparticuz/chromium)
+                     ├─ ServiceM8 API       (REST)
+                     └─ Azure Table Storage (pendingOrders)
+Secrets → Azure Key Vault, read at cold-start via Managed Identity
+Logs    → Application Insights
 ```
 
 ## Layout
 
-- `src/handler.ts` — Lambda entry, HMAC verify, classify, dispatch.
+- `src/handler.ts` — Azure Functions HTTP entry; HMAC verify, classify, dispatch.
 - `src/classify.ts` — regex classifier (quote vs order vs ignore).
 - `src/flows/quote.ts`, `src/flows/order.ts` — the two flows.
 - `src/clients/{servicem8,zunos,epan}.ts` — integration clients.
-- `src/store.ts` — DynamoDB pending-orders store.
-- `infra/template.yaml` — AWS SAM (API Gateway + Lambda + DynamoDB + IAM).
+- `src/store.ts` — Azure Table Storage pending-orders store.
+- `src/config.ts` — Key Vault + app-settings loader.
+- `infra/main.bicep` — Azure infra (Function App + Storage + Key Vault + App Insights + RBAC).
+- `host.json`, `local.settings.json.example` — Azure Functions config.
 - `scripts/epan-lookup.ts`, `scripts/epan-order.ts` — local smoke tests.
+
+## Prerequisites for deploy
+
+- An Azure subscription with Contributor access on a resource group.
+- The Azure CLI: `brew install azure-cli` (or [docs](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli)).
+- The Azure Functions Core Tools: `brew tap azure/functions && brew install azure-functions-core-tools@4`.
+- Node.js 20+.
 
 ## Local development
 
 ```bash
 npm install
 npx playwright install chromium  # only needed if running EPAN smoke scripts locally
-cp .env.example .env             # fill in for local smoke scripts
+cp local.settings.json.example local.settings.json   # fill in for `func start`
+cp .env.example .env                                  # fill in for the smoke scripts
 npm test
 ```
+
+To run the function locally: `func start`. It listens on `http://localhost:7071/api/sm8/webhook`.
 
 ## Deploy
 
 ```bash
+# 1. Sign in
+az login
+az account set --subscription "<subscription-name-or-id>"
+
+# 2. Create the resource group (skip if your IT has already made one)
+az group create --name sm8-part-bot-rg --location australiaeast
+
+# 3. Provision infra
+az deployment group create \
+  --resource-group sm8-part-bot-rg \
+  --template-file infra/main.bicep
+
+# Note the outputs: functionAppName, webhookUrl, keyVaultName, storageAccountName.
+
+# 4. Seed Key Vault secrets
+KV=<keyVaultName from step 3>
+az keyvault secret set --vault-name $KV --name sm8-api-key         --value '…'
+az keyvault secret set --vault-name $KV --name sm8-webhook-secret  --value "$(openssl rand -hex 32)"
+az keyvault secret set --vault-name $KV --name zunos-client-id     --value '…'
+az keyvault secret set --vault-name $KV --name zunos-client-secret --value '…'
+az keyvault secret set --vault-name $KV --name epan-username       --value '…'
+az keyvault secret set --vault-name $KV --name epan-password       --value '…'
+
+# Save the SM8_WEBHOOK_SECRET value — you need it again to register the webhook.
+
+# 5. Build and publish the function code
 npm install
 npm run build
-sam build -t infra/template.yaml
-sam deploy --guided -t infra/template.yaml
-```
-
-The deploy will print a `WebhookUrl` output. Then seed SSM params:
-
-```bash
-PREFIX=/sm8-part-bot
-aws ssm put-parameter --name $PREFIX/SM8_API_KEY        --type SecureString --value '…'
-aws ssm put-parameter --name $PREFIX/SM8_WEBHOOK_SECRET --type SecureString --value '…'
-aws ssm put-parameter --name $PREFIX/SM8_BOT_STAFF_UUID --type String       --value '…'
-aws ssm put-parameter --name $PREFIX/ZUNOS_BASE_URL     --type String       --value 'https://api.zunos.com'
-aws ssm put-parameter --name $PREFIX/ZUNOS_CLIENT_ID    --type SecureString --value '…'
-aws ssm put-parameter --name $PREFIX/ZUNOS_CLIENT_SECRET --type SecureString --value '…'
-aws ssm put-parameter --name $PREFIX/ZUNOS_SEARCH_PATH  --type String       --value '/v1/content/search'
-aws ssm put-parameter --name $PREFIX/EPAN_BASE_URL      --type String       --value 'https://b2b.epan.example'
-aws ssm put-parameter --name $PREFIX/EPAN_USERNAME      --type SecureString --value '…'
-aws ssm put-parameter --name $PREFIX/EPAN_PASSWORD      --type SecureString --value '…'
+func azure functionapp publish <functionAppName from step 3>
 ```
 
 ## Register the SM8 webhook (one-time)
 
-Subscribe the webhook URL emitted by SAM to `job_activity.created`:
+Subscribe the webhook URL emitted by Bicep to `job_activity.created`:
 
 ```bash
+WEBHOOK_URL='<webhookUrl from deploy outputs>'
+SECRET='<the value you set as sm8-webhook-secret>'
+SM8_API_KEY='<your ServiceM8 API key>'
+
 curl -u "$SM8_API_KEY:x" \
   -H 'Content-Type: application/json' \
   -X POST https://api.servicem8.com/api_1.0/event.json \
-  -d '{
-    "event_type": "job_activity.created",
-    "endpoint_url": "<WebhookUrl from SAM>",
-    "secret": "<SM8_WEBHOOK_SECRET>"
-  }'
+  -d "{
+    \"event_type\": \"job_activity.created\",
+    \"endpoint_url\": \"$WEBHOOK_URL\",
+    \"secret\": \"$SECRET\"
+  }"
 ```
 
 ## End-to-end test
 
-1. On a sandbox SM8 job, add a note: `order ABC-123`.
+1. On a sandbox SM8 job, add a note: `order <real-EPAN-SKU>`.
 2. Within ~30 s a To-Do appears containing the Zunos description, EPAN price and stock, and the confirm phrase.
 3. Add another note: `yes please order this part on EPAN`.
 4. Within ~30 s the To-Do closes and a status note appears with the EPAN order reference.
 5. Verify the order in EPAN's order history.
+
+Logs stream live with `az webapp log tail --resource-group sm8-part-bot-rg --name <functionAppName>` or via Application Insights in the portal.
 
 ## Known limits (v1)
 
 - One part per `order` note — multi-line orders are not parsed.
 - Confirmer cannot say "no" — the To-Do is just left open. A `cancel order` keyword can be added later.
 - Failures rely on SM8 webhook retries; there's no internal queue.
+- Azure Table Storage doesn't support TTL; old `pendingOrders` rows accumulate. A periodic cleanup function or a manual `az storage entity delete` is fine for the foreseeable future.
 
 ## Notes on the EPAN integration
 

@@ -1,0 +1,26 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "node",
+    "FUNCTIONS_EXTENSION_VERSION": "~4",
+
+    "LOCAL_DEV": "true",
+
+    "STORAGE_ACCOUNT_NAME": "your-storage-account",
+    "PENDING_ORDERS_TABLE": "pendingOrders",
+
+    "SM8_API_KEY": "",
+    "SM8_WEBHOOK_SECRET": "",
+    "SM8_BOT_STAFF_UUID": "",
+
+    "ZUNOS_BASE_URL": "https://api.zunos.com",
+    "ZUNOS_CLIENT_ID": "",
+    "ZUNOS_CLIENT_SECRET": "",
+    "ZUNOS_SEARCH_PATH": "/v1/content/search",
+
+    "EPAN_BASE_URL": "https://e-pan.panasonic.com.au",
+    "EPAN_USERNAME": "",
+    "EPAN_PASSWORD": ""
+  }
+}

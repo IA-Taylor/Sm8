@@ -261,7 +261,14 @@ function parseStock(text: string): number {
 // Lazy-load chromium only when actually opening a browser, so tests that
 // stub the EpanClient don't need to install playwright.
 async function loadChromium(): Promise<{ chromium: typeof import('playwright-core').chromium }> {
-  if (process.env.AWS_LAMBDA_FUNCTION_NAME) {
+  // Use @sparticuz/chromium when running in any serverless container
+  // (Azure Functions, AWS Lambda) where shipping a full Chromium would
+  // blow the package size budget. Local dev uses a system chromium.
+  const isServerless =
+    !!process.env.WEBSITE_INSTANCE_ID || // Azure Functions / App Service
+    !!process.env.AWS_LAMBDA_FUNCTION_NAME;
+
+  if (isServerless) {
     const sparticuz = await import('@sparticuz/chromium');
     const { chromium } = await import('playwright-core');
     const exec = await sparticuz.default.executablePath();
