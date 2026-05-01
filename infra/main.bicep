@@ -20,7 +20,8 @@ param baseName string = 'sm8partbot'
 param location string = resourceGroup().location
 
 var suffix = uniqueString(resourceGroup().id)
-var storageAccountName = toLower('${baseName}st${suffix}')
+// Storage account names: 3-24 chars, lowercase letters and digits only.
+var storageAccountName = take(toLower('${baseName}st${suffix}'), 24)
 var functionAppName = '${baseName}-fn-${suffix}'
 var planName = '${baseName}-plan-${suffix}'
 var keyVaultName = take('${baseName}-kv-${suffix}', 24)
