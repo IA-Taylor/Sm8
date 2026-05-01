@@ -16,6 +16,9 @@ export interface ServiceM8Client {
 const API = 'https://api.servicem8.com/api_1.0';
 
 export function createServiceM8Client(cfg: Config): ServiceM8Client {
+  if (!cfg.sm8ApiKey || !cfg.sm8WebhookSecret) {
+    throw new Error('ServiceM8 config missing: set SM8_API_KEY and SM8_WEBHOOK_SECRET');
+  }
   const auth = 'Basic ' + Buffer.from(`${cfg.sm8ApiKey}:x`).toString('base64');
   const headers = { Authorization: auth, 'Content-Type': 'application/json' };
 

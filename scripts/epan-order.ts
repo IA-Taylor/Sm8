@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { createEpanClient } from '../src/clients/epan.js';
 import { loadConfig } from '../src/config.js';
 

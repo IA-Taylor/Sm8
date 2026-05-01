@@ -11,6 +11,11 @@ interface TokenCache {
 }
 
 export function createZunosClient(cfg: Config): ZunosClient {
+  if (!cfg.zunosBaseUrl || !cfg.zunosClientId || !cfg.zunosClientSecret) {
+    throw new Error(
+      'Zunos config missing: set ZUNOS_BASE_URL, ZUNOS_CLIENT_ID, ZUNOS_CLIENT_SECRET',
+    );
+  }
   let token: TokenCache | null = null;
 
   async function getToken(): Promise<string> {

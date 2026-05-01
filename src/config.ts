@@ -91,11 +91,7 @@ export async function loadConfig(): Promise<Config> {
 function mapParams(params: Record<string, string>): Config {
   const out = {} as Config;
   for (const [src, dest] of Object.entries(KEY_MAP)) {
-    const v = params[src];
-    if (!v && dest !== 'sm8BotStaffUuid') {
-      throw new Error(`Missing required config: ${src}`);
-    }
-    (out as unknown as Record<string, string>)[dest] = v ?? '';
+    (out as unknown as Record<string, string>)[dest] = params[src] ?? '';
   }
   return out;
 }

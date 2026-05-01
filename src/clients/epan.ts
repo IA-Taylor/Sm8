@@ -65,6 +65,12 @@ const COOKIE_PATH = '/tmp/epan-cookies.json';
 const SCREEN_TIMEOUT_MS = 30_000;
 
 export function createEpanClient(cfg: Config): EpanClient {
+  if (!cfg.epanBaseUrl || !cfg.epanUsername || !cfg.epanPassword) {
+    throw new Error(
+      'EPAN config missing: set EPAN_BASE_URL, EPAN_USERNAME, EPAN_PASSWORD',
+    );
+  }
+
   async function withSession<T>(fn: (page: Page) => Promise<T>): Promise<T> {
     const { browser, context, page } = await openSession(cfg);
     try {
