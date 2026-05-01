@@ -106,7 +106,9 @@ export function createEpanClient(cfg: Config): EpanClient {
         const greenCells = await page.locator('td.HGREEN').allTextContents();
         const cyanCells = await page.locator('td.HCYAN').allTextContents();
 
-        const priceText = findValueAfterLabel(greenCells, 'Price extax');
+        // We want the recommended retail price including tax — that's what
+        // gets quoted to a customer. "Price extax" is the wholesale cost.
+        const priceText = findValueAfterLabel(greenCells, 'Rec Rtl inc tax');
         const stockText = findValueAfterLabel(cyanCells, 'Available');
         const internalId =
           (await page.inputValue(SELECTORS.productInternalId).catch(() => '')) || sku.toUpperCase();
