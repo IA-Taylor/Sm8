@@ -103,8 +103,8 @@ export function createEpanClient(cfg: Config): EpanClient {
           return null;
         }
 
-        const priceText = (await page.textContent(SELECTORS.productPrice).catch(() => '')) ?? '';
-        const stockText = (await page.textContent(SELECTORS.productStock).catch(() => '')) ?? '';
+        const priceText = await firstCellTextNear(page, 'Price extax', 'td.HGREEN');
+        const stockText = await firstCellTextNear(page, 'Available', 'td.HCYAN');
         const internalId =
           (await page.inputValue(SELECTORS.productInternalId).catch(() => '')) || sku.toUpperCase();
 
@@ -193,14 +193,12 @@ async function openSession(cfg: Config): Promise<{
   const browser = await chromium.launch({ headless, ...(slowMo ? { slowMo } : {}) });
   const context = await browser.newContext();
 
-  if (existsSync(COOKIE_PATH)) {
-    try {
-      const cookies = JSON.parse(readFileSync(COOKIE_PATH, 'utf8'));
-      await context.addCookies(cookies);
-    } catch {
-      // ignore; fall through to fresh login
-    }
-  }
+  // Cookie reuse made the script flaky: HATS sessions are sticky and
+  // restoring cookies can land us mid-flow on a screen our login check
+  // doesn't recognise. Always start with a clean login.
+  void existsSync;
+  void readFileSync;
+  void COOKIE_PATH;
 
   const page = await context.newPage();
   // The HATS servlet always lives at /epan/entry — navigating to the bare
@@ -246,11 +244,26 @@ async function dumpDiagnostics(page: Page, tag: string): Promise<void> {
 }
 
 async function persistCookies(context: BrowserContext): Promise<void> {
+  // Disabled — see openSession comment. Kept as no-op so the call sites
+  // don't need to change.
+  void context;
+  void writeFileSync;
+}
+
+// Find the first cell matching `cellSelector` inside a row that contains the
+// given label text. More robust than nth-child positional selectors when
+// HATS shifts the layout slightly between sessions.
+async function firstCellTextNear(
+  page: Page,
+  label: string,
+  cellSelector: string,
+): Promise<string> {
+  const row = page.locator('tr', { hasText: label }).first();
   try {
-    const cookies = await context.cookies();
-    writeFileSync(COOKIE_PATH, JSON.stringify(cookies));
+    const text = await row.locator(cellSelector).first().textContent({ timeout: 5000 });
+    return (text ?? '').trim();
   } catch {
-    // best-effort; not fatal
+    return '';
   }
 }
 
