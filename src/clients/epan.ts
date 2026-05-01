@@ -260,15 +260,24 @@ async function persistCookies(context: BrowserContext): Promise<void> {
 
 // HATS lays cells out as siblings on long flat rows: a label cell, often
 // some empty padding cells, then the value cell. To read the value for a
-// given label, find the cell whose trimmed text equals the label, then
+// given label, find the cell whose normalised text equals the label, then
 // scan the next few cells for one that contains a digit.
+//
+// Normalisation collapses any whitespace runs (including the non-breaking
+// spaces HATS uses between words for terminal-style fixed-width layouts)
+// into a single regular space, so "Rec Rtl inc tax" matches whether HATS
+// sent regular spaces or U+00A0.
+function normaliseWhitespace(s: string): string {
+  return s.replace(/\s+/g, ' ').trim();
+}
+
 function findValueAfterLabel(cells: string[], label: string): string {
-  const trimmed = cells.map((t) => t.trim());
-  const idx = trimmed.findIndex((t) => t === label);
+  const wanted = normaliseWhitespace(label);
+  const idx = cells.findIndex((t) => normaliseWhitespace(t) === wanted);
   if (idx < 0) return '';
-  const window = Math.min(trimmed.length, idx + 6);
+  const window = Math.min(cells.length, idx + 6);
   for (let i = idx + 1; i < window; i++) {
-    const text = trimmed[i];
+    const text = (cells[i] ?? '').trim();
     if (text && /\d/.test(text)) return text;
   }
   return '';
