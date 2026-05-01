@@ -167,7 +167,9 @@ async function openSession(cfg: Config): Promise<{
   page: Page;
 }> {
   const { chromium } = await loadChromium();
-  const browser = await chromium.launch();
+  const headless = process.env.HEADLESS !== 'false';
+  const slowMo = process.env.SLOWMO ? Number(process.env.SLOWMO) : undefined;
+  const browser = await chromium.launch({ headless, ...(slowMo ? { slowMo } : {}) });
   const context = await browser.newContext();
 
   if (existsSync(COOKIE_PATH)) {
@@ -180,20 +182,46 @@ async function openSession(cfg: Config): Promise<{
   }
 
   const page = await context.newPage();
-  await page.goto(cfg.epanBaseUrl);
+  // The HATS servlet always lives at /epan/entry — navigating to the bare
+  // host can land somewhere else.
+  const entryUrl = cfg.epanBaseUrl.replace(/\/$/, '') + '/epan/entry';
+  await page.goto(entryUrl);
   await page.waitForLoadState('networkidle');
 
+  if (await page.$(SELECTORS.loginSuccessIndicator)) {
+    return { browser, context, page };
+  }
+
+  try {
+    await page.waitForSelector(SELECTORS.loginUser, { timeout: 15_000 });
+  } catch {
+    await dumpDiagnostics(page, 'login-form-not-found');
+    throw new Error(
+      `EPAN: login form not found at ${page.url()}. ` +
+        `A screenshot and HTML snapshot were saved to /tmp/epan-debug.* for inspection.`,
+    );
+  }
+
+  await page.fill(SELECTORS.loginUser, cfg.epanUsername.toUpperCase());
+  await page.fill(SELECTORS.loginPass, cfg.epanPassword);
+  await page.click(SELECTORS.loginSubmit);
+  await page.waitForLoadState('networkidle');
   if (!(await page.$(SELECTORS.loginSuccessIndicator))) {
-    await page.fill(SELECTORS.loginUser, cfg.epanUsername.toUpperCase());
-    await page.fill(SELECTORS.loginPass, cfg.epanPassword);
-    await page.click(SELECTORS.loginSubmit);
-    await page.waitForLoadState('networkidle');
-    if (!(await page.$(SELECTORS.loginSuccessIndicator))) {
-      throw new Error('EPAN: login failed');
-    }
+    await dumpDiagnostics(page, 'login-failed');
+    throw new Error('EPAN: login submitted but the post-login indicator never appeared');
   }
 
   return { browser, context, page };
+}
+
+async function dumpDiagnostics(page: Page, tag: string): Promise<void> {
+  try {
+    await page.screenshot({ path: `/tmp/epan-debug-${tag}.png`, fullPage: true });
+    const html = await page.content();
+    writeFileSync(`/tmp/epan-debug-${tag}.html`, html);
+  } catch {
+    // best-effort; don't mask the real error
+  }
 }
 
 async function persistCookies(context: BrowserContext): Promise<void> {
