@@ -111,10 +111,15 @@ export function createEpanClient(cfg: Config): EpanClient {
         const price = parsePrice(priceText);
         if (!isFinite(price) || price === 0) {
           await dumpDiagnostics(page, 'lookup-bad-price');
+          const greenCells = await page.locator('td.HGREEN').allTextContents();
+          const cyanCells = await page.locator('td.HCYAN').allTextContents();
           console.error(
-            `[epan.lookup] reached DLPR501 but could not parse a valid price. ` +
-              `priceText=${JSON.stringify(priceText)}, stockText=${JSON.stringify(stockText)}, ` +
-              `internalId=${JSON.stringify(internalId)}. ` +
+            `[epan.lookup] reached DLPR501 but could not parse a valid price.\n` +
+              `  priceText (Price extax row): ${JSON.stringify(priceText)}\n` +
+              `  stockText (Available row):   ${JSON.stringify(stockText)}\n` +
+              `  internalId:                  ${JSON.stringify(internalId)}\n` +
+              `  all HGREEN cell texts:       ${JSON.stringify(greenCells)}\n` +
+              `  all HCYAN cell texts:        ${JSON.stringify(cyanCells)}\n` +
               `See /tmp/epan-debug-lookup-bad-price.png`,
           );
           return null;
