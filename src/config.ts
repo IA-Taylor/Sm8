@@ -79,7 +79,18 @@ export async function loadConfig(): Promise<Config> {
         const secret = await client.getSecret(secretName);
         params[k] = secret.value ?? '';
       } catch (err) {
-        throw new Error(`Failed to read secret ${secretName} from Key Vault: ${err}`);
+        // 404 = secret hasn't been set. Treat as empty string — the
+        // individual clients (Zunos optional, SM8/EPAN required) will
+        // validate the keys they actually need at construction time.
+        const status =
+          (err as { statusCode?: number }).statusCode ??
+          (err as { code?: string }).code;
+        if (status === 404 || status === 'SecretNotFound') {
+          console.warn(`[config] Key Vault secret '${secretName}' not found; treating as empty`);
+          params[k] = '';
+        } else {
+          throw new Error(`Failed to read secret ${secretName} from Key Vault: ${err}`);
+        }
       }
     }
   }
