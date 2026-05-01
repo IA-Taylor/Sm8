@@ -103,23 +103,24 @@ export function createEpanClient(cfg: Config): EpanClient {
           return null;
         }
 
-        const priceText = await firstCellTextNear(page, 'Price extax', 'td.HGREEN');
-        const stockText = await firstCellTextNear(page, 'Available', 'td.HCYAN');
+        const greenCells = await page.locator('td.HGREEN').allTextContents();
+        const cyanCells = await page.locator('td.HCYAN').allTextContents();
+
+        const priceText = findValueAfterLabel(greenCells, 'Price extax');
+        const stockText = findValueAfterLabel(cyanCells, 'Available');
         const internalId =
           (await page.inputValue(SELECTORS.productInternalId).catch(() => '')) || sku.toUpperCase();
 
         const price = parsePrice(priceText);
         if (!isFinite(price) || price === 0) {
           await dumpDiagnostics(page, 'lookup-bad-price');
-          const greenCells = await page.locator('td.HGREEN').allTextContents();
-          const cyanCells = await page.locator('td.HCYAN').allTextContents();
           console.error(
             `[epan.lookup] reached DLPR501 but could not parse a valid price.\n` +
-              `  priceText (Price extax row): ${JSON.stringify(priceText)}\n` +
-              `  stockText (Available row):   ${JSON.stringify(stockText)}\n` +
-              `  internalId:                  ${JSON.stringify(internalId)}\n` +
-              `  all HGREEN cell texts:       ${JSON.stringify(greenCells)}\n` +
-              `  all HCYAN cell texts:        ${JSON.stringify(cyanCells)}\n` +
+              `  priceText: ${JSON.stringify(priceText)}\n` +
+              `  stockText: ${JSON.stringify(stockText)}\n` +
+              `  internalId: ${JSON.stringify(internalId)}\n` +
+              `  all HGREEN cell texts: ${JSON.stringify(greenCells)}\n` +
+              `  all HCYAN cell texts:  ${JSON.stringify(cyanCells)}\n` +
               `See /tmp/epan-debug-lookup-bad-price.png`,
           );
           return null;
@@ -255,21 +256,20 @@ async function persistCookies(context: BrowserContext): Promise<void> {
   void writeFileSync;
 }
 
-// Find the first cell matching `cellSelector` inside a row that contains the
-// given label text. More robust than nth-child positional selectors when
-// HATS shifts the layout slightly between sessions.
-async function firstCellTextNear(
-  page: Page,
-  label: string,
-  cellSelector: string,
-): Promise<string> {
-  const row = page.locator('tr', { hasText: label }).first();
-  try {
-    const text = await row.locator(cellSelector).first().textContent({ timeout: 5000 });
-    return (text ?? '').trim();
-  } catch {
-    return '';
+// HATS lays cells out as siblings on long flat rows: a label cell, often
+// some empty padding cells, then the value cell. To read the value for a
+// given label, find the cell whose trimmed text equals the label, then
+// scan the next few cells for one that contains a digit.
+function findValueAfterLabel(cells: string[], label: string): string {
+  const trimmed = cells.map((t) => t.trim());
+  const idx = trimmed.findIndex((t) => t === label);
+  if (idx < 0) return '';
+  const window = Math.min(trimmed.length, idx + 6);
+  for (let i = idx + 1; i < window; i++) {
+    const text = trimmed[i];
+    if (text && /\d/.test(text)) return text;
   }
+  return '';
 }
 
 // Click a home-menu link and wait for the expected screen code to render.
