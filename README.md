@@ -4,13 +4,13 @@ ServiceM8 → Zunos → EPAN automated part-order workflow, deployed on Azure.
 
 ## What it does
 
-When a tech adds a note on a ServiceM8 job:
+The bot is named **Kevin**. He only responds when the note starts with his name — anything else gets ignored.
 
-| Note (case-insensitive)                  | Bot does                                                          |
-| ---------------------------------------- | ----------------------------------------------------------------- |
-| `order ABC-123` (optionally `… 5` for qty) | Looks the part up on Bigtincan Zunos, then on the EPAN B2B portal for price + stock, and creates a To-Do on the job asking for confirmation. |
-| `yes please order this part on EPAN`     | Places the previously-quoted order on EPAN, closes the To-Do, and posts a confirmation note with the EPAN order reference. |
-| Anything else                            | Ignored.                                                          |
+| Note (case-insensitive)                                    | Bot does                                                          |
+| ---------------------------------------------------------- | ----------------------------------------------------------------- |
+| `Kevin order ABC-123` (optionally `… 5` for qty)           | Looks the part up on Bigtincan Zunos, then on the EPAN B2B portal for price + stock, and creates a To-Do on the job asking for confirmation. |
+| `Kevin yes please order this part on EPAN`                 | Places the previously-quoted order on EPAN, closes the To-Do, and posts a confirmation note with the EPAN order reference. |
+| Anything else, including `order ABC-123` without "Kevin"   | Ignored.                                                          |
 
 State for the two-step flow lives in an Azure Table Storage table keyed on `job_uuid`.
 
@@ -112,9 +112,9 @@ curl -u "$SM8_API_KEY:x" \
 
 ## End-to-end test
 
-1. On a sandbox SM8 job, add a note: `order <real-EPAN-SKU>`.
+1. On a sandbox SM8 job, add a note: `Kevin order <real-EPAN-SKU>`.
 2. Within ~30 s a To-Do appears containing the Zunos description, EPAN price and stock, and the confirm phrase.
-3. Add another note: `yes please order this part on EPAN`.
+3. Add another note: `Kevin yes please order this part on EPAN`.
 4. Within ~30 s the To-Do closes and a status note appears with the EPAN order reference.
 5. Verify the order in EPAN's order history.
 

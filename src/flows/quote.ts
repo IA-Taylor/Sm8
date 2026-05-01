@@ -41,13 +41,13 @@ export async function runQuote(deps: QuoteDeps, input: QuoteInput): Promise<Pend
     taskBody =
       `Confirm order: ${description} (qty ${input.qty}). ` +
       `EPAN lookup unavailable — please check stock manually. ` +
-      `Reply "yes please order this part on EPAN" to retry the order.`;
+      `Reply "Kevin yes please order this part on EPAN" to retry the order.`;
   } else {
     status = 'awaiting_confirmation';
     taskBody =
       `Confirm order: ${description} (qty ${input.qty}) ` +
       `@ $${quote.price.toFixed(2)} ${quote.currency}, EPAN stock ${quote.stock}. ` +
-      `Reply "yes please order this part on EPAN" to proceed.`;
+      `Reply "Kevin yes please order this part on EPAN" to proceed.`;
   }
 
   const { taskUuid } = await sm8.createTask({
