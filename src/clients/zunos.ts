@@ -1,8 +1,25 @@
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import pdfParse from 'pdf-parse';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
 import type { Config } from '../config.js';
 import type { ZunosPart } from '../types.js';
+
+function log(msg: string): void {
+  console.error(`[zunos] ${msg}`);
+}
+
+async function dumpDiagnostic(page: Page, tag: string): Promise<void> {
+  try {
+    const path = `/tmp/zunos-debug-${tag}`;
+    await page.screenshot({ path: `${path}.png`, fullPage: true });
+    const html = await page.content();
+    writeFileSync(`${path}.html`, html);
+    log(`saved diagnostic to ${path}.{png,html}`);
+  } catch {
+    // best-effort
+  }
+}
 
 export interface ZunosClient {
   // Find a part number for a given model + part type by:
@@ -84,6 +101,8 @@ export function createZunosClient(cfg: Config): ZunosClient {
     async findPartInManual(modelNumber, partType) {
       try {
         return await withSession(async (page) => {
+          log(`looking for "${partType}" in model "${modelNumber}"`);
+
           // Set up the request listener BEFORE we click into the PDF, so we
           // catch the signed URL the moment it's fetched.
           const signedUrlPromise = page
@@ -94,37 +113,67 @@ export function createZunosClient(cfg: Config): ZunosClient {
             )
             .catch(() => null);
 
-          await navigateToSearch(page);
+          log('navigating to Search');
+          try {
+            await navigateToSearch(page);
+          } catch (err) {
+            log(`failed to reach Search: ${err}`);
+            await dumpDiagnostic(page, 'no-search');
+            return null;
+          }
+
+          log(`running search for "${modelNumber}"`);
           await runSearch(page, modelNumber);
+
           const pickedTitle = await pickAndOpenBestPdf(page, partType);
-          if (!pickedTitle) return null;
+          if (!pickedTitle) {
+            await dumpDiagnostic(page, 'no-pdf-results');
+            return null;
+          }
+          log(`opened PDF: "${pickedTitle}"`);
 
           const signedUrlReq = await signedUrlPromise;
           if (!signedUrlReq) {
-            console.error(
-              `[zunos.findPartInManual] never observed a content.zunos.com PDF fetch for model ${modelNumber}`,
-            );
+            log(`never observed a content.zunos.com PDF fetch for model ${modelNumber}`);
+            await dumpDiagnostic(page, 'no-signed-url');
             return null;
           }
+          log(`got signed PDF URL: ${signedUrlReq.url().slice(0, 100)}...`);
 
           const pdfBytes = await fetchSignedPdf(signedUrlReq.url(), page);
-          if (!pdfBytes) return null;
+          if (!pdfBytes) {
+            log('PDF download returned empty');
+            return null;
+          }
+          log(`downloaded PDF: ${pdfBytes.byteLength} bytes`);
 
           const text = await extractPdfText(pdfBytes);
-          if (!text) return null;
+          if (!text) {
+            log('PDF text extraction returned empty');
+            return null;
+          }
+          log(`extracted ${text.length} chars of text from PDF`);
+          // Stash the text for inspection if the regex misses
+          try {
+            writeFileSync('/tmp/zunos-debug-extracted.txt', text);
+          } catch {
+            // best-effort
+          }
 
           const partNumber = findPartNumberInText(text, partType);
           if (!partNumber) {
-            console.error(
-              `[zunos.findPartInManual] PDF "${pickedTitle}" had no recognisable part number for "${partType}"`,
+            log(
+              `no part number found near "${partType}" keyword in PDF "${pickedTitle}". ` +
+                `Extracted text saved to /tmp/zunos-debug-extracted.txt for inspection.`,
             );
             return null;
           }
 
+          log(`found part number: ${partNumber}`);
           return partNumber;
         });
       } catch (err) {
-        console.error('[zunos.findPartInManual] failed:', err);
+        log(`findPartInManual threw: ${err}`);
         return null;
       }
     },
@@ -202,8 +251,12 @@ async function pickAndOpenBestPdf(page: Page, partType: string): Promise<string 
     .catch(() => undefined);
 
   const tiles = await page.$$(SELECTORS.resultPdfTile);
-  if (tiles.length === 0) return null;
+  if (tiles.length === 0) {
+    log('no PDF result tiles found on the search results page');
+    return null;
+  }
 
+  log(`found ${tiles.length} PDF result(s) on the page; scoring them...`);
   let bestIdx = 0;
   let bestScore = -Infinity;
   let bestTitle = '';
@@ -211,6 +264,7 @@ async function pickAndOpenBestPdf(page: Page, partType: string): Promise<string 
     const titleEl = await tiles[i]!.$('.catalog-text-bold');
     const title = ((await titleEl?.textContent()) ?? '').trim();
     const score = scorePdfTitle(title, partType);
+    log(`  [${i}] score=${score}  title="${title}"`);
     if (score > bestScore) {
       bestScore = score;
       bestIdx = i;
@@ -218,6 +272,7 @@ async function pickAndOpenBestPdf(page: Page, partType: string): Promise<string 
     }
   }
 
+  log(`picking [${bestIdx}] (score=${bestScore}): "${bestTitle}"`);
   await tiles[bestIdx]!.click();
   await page.waitForLoadState('networkidle');
   return bestTitle;
