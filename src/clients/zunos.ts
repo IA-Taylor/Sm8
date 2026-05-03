@@ -268,6 +268,35 @@ async function openSession(cfg: Config): Promise<{
   return { browser, context, page };
 }
 
+// Click the "See All" link inside the search-results group that contains
+// PDF tiles, so we score the entire Media list (not just the default 3).
+// Best-effort: if the link can't be found, leave the results as-is and let
+// the scorer work with what's visible.
+async function expandMediaResults(page: Page): Promise<void> {
+  // Tier the selectors from most-specific (Media group containing a PDF)
+  // to least, so we don't accidentally click "See All" on a non-PDF section.
+  const candidates = [
+    '.search-group:has(img.zn-icon[src*="icon_content_type_pdf"]) .search-group-see-all',
+    '[class*="search-group"]:has(img.zn-icon[src*="icon_content_type_pdf"]) [class*="see-all"]',
+    '.search-group-see-all',
+  ];
+  for (const sel of candidates) {
+    try {
+      const loc = page.locator(sel).first();
+      if (await loc.isVisible({ timeout: 1500 })) {
+        log(`clicking "See All" via: ${sel}`);
+        await loc.click({ timeout: 3000 });
+        await page.waitForLoadState('networkidle');
+        await page.waitForTimeout(1500);
+        return;
+      }
+    } catch {
+      // try next candidate
+    }
+  }
+  log('no "See All" link visible — scoring whatever PDFs are on screen');
+}
+
 // Best-effort dismissal of cookie / consent banners. Tries a list of
 // common "Accept" button patterns; silently moves on if nothing matches.
 async function dismissCookieBanner(page: Page): Promise<void> {
@@ -430,6 +459,10 @@ async function pickAndOpenBestPdf(
   await page
     .waitForSelector(SELECTORS.resultPdfTile, { timeout: 10_000 })
     .catch(() => undefined);
+
+  // Zunos shows only 3 PDFs per group by default. Click the Media section's
+  // "See All" link first so we score the full PDF list, not just the top 3.
+  await expandMediaResults(page);
 
   const tiles = await page.$$(SELECTORS.resultPdfTile);
   if (tiles.length === 0) {
