@@ -322,9 +322,28 @@ async function navigateToSearch(page: Page): Promise<void> {
 
 async function runSearch(page: Page, query: string): Promise<void> {
   await page.fill(SELECTORS.searchInput, query);
-  // Pressing Enter is more reliable than clicking the submit button across UI variants.
-  await page.locator(SELECTORS.searchInput).press('Enter');
+
+  // Zunos requires clicking the "Search" text in the top-right of the search
+  // bar to actually fire the search; pressing Enter alone leaves the UI in
+  // its empty-state "type and click Search" placeholder. Try the explicit
+  // text locator first; fall back to Enter as a backstop.
+  const searchByText = page.getByText('Search', { exact: true }).first();
+  const clicked = await searchByText
+    .click({ timeout: 3000 })
+    .then(() => true)
+    .catch(() => false);
+
+  if (clicked) {
+    log('clicked the "Search" text element');
+  } else {
+    log('"Search" text element not found, pressing Enter as fallback');
+    await page.locator(SELECTORS.searchInput).press('Enter').catch(() => undefined);
+  }
+
+  // Wait for either result tiles to appear or a "no results" message.
+  // Some result types load asynchronously, so give the page a beat to render.
   await page.waitForLoadState('networkidle');
+  await page.waitForTimeout(2000);
 }
 
 // Score each PDF result by how service-manual-looking its title is, click
