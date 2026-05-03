@@ -591,8 +591,15 @@ export function scorePdfTitle(title: string, partType: string, modelNumber = '')
 
   // --- Document type ---
   // Tolerant of common typos seen in real Zunos titles ("Manul", "Manuel",
-  // "Manaul" — all are intended to be "Manual").
-  const isServiceManual = /service\s+man[au]+l\b/i.test(title);
+  // "Manaul" — all are intended to be "Manual"). Enumerated rather than
+  // regexed because it's easier to extend as we discover new typos.
+  const isServiceManual = [
+    'service manual',
+    'service manul',
+    'service manuel',
+    'service manaul',
+    'service manula',
+  ].some((v) => t.includes(v));
   if (t.includes('exploded view') && t.includes('parts list')) score += 50;
   else if (t.includes('exploded views') && t.includes('parts list')) score += 50;
   else if (t.includes('exploded') || t.includes('parts list')) score += 40;
