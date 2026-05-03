@@ -227,16 +227,42 @@ async function openSession(cfg: Config): Promise<{
   await page.fill(SELECTORS.loginPass, cfg.zunosPassword);
   await page.locator(SELECTORS.loginNext).last().click();
 
-  await page
-    .waitForSelector(SELECTORS.loginSuccessIndicator, { timeout: SCREEN_TIMEOUT_MS })
-    .catch(() => {
-      throw new Error('Zunos: login flow finished but avatar never appeared');
-    });
+  // Wait for any signal that we're past the login modal. The avatar is the
+  // canonical post-login element, but the modal disappearing OR the URL
+  // moving past the bare hash is also strong evidence.
+  const loggedIn = await waitForLoggedIn(page);
+  if (!loggedIn) {
+    await dumpDiagnostic(page, 'login-failed');
+    log(`page URL at login-failed time: ${page.url()}`);
+    throw new Error(
+      'Zunos: login flow finished but no post-login indicator appeared. ' +
+        'Diagnostic saved to /tmp/zunos-debug-login-failed.{png,html}',
+    );
+  }
+  log('login confirmed (post-login indicator visible)');
 
   // Mark cookie path as referenced (placeholder for future session reuse).
   void COOKIE_PATH;
 
   return { browser, context, page };
+}
+
+async function waitForLoggedIn(page: Page): Promise<boolean> {
+  try {
+    await Promise.race([
+      // Original: avatar in top nav
+      page.waitForSelector(SELECTORS.loginSuccessIndicator, { timeout: SCREEN_TIMEOUT_MS }),
+      // Fallback: the <zn-login> element disappears once the modal closes
+      page.waitForSelector('zn-login', { state: 'detached', timeout: SCREEN_TIMEOUT_MS }),
+      // Fallback: URL moves into the SPA (e.g. /#/board/...)
+      page.waitForURL((url) => /\/#\/(board|catalog|search|library)/.test(url.toString()), {
+        timeout: SCREEN_TIMEOUT_MS,
+      }),
+    ]);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function navigateToSearch(page: Page): Promise<void> {
