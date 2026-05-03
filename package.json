@@ -12,7 +12,8 @@
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "func start",
     "epan:lookup": "tsx scripts/epan-lookup.ts",
-    "epan:order": "tsx scripts/epan-order.ts"
+    "epan:order": "tsx scripts/epan-order.ts",
+    "zunos:lookup": "tsx scripts/zunos-lookup.ts"
   },
   "dependencies": {
     "@azure/data-tables": "^13.3.0",
