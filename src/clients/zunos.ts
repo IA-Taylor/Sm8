@@ -280,14 +280,23 @@ async function expandMediaResults(page: Page): Promise<void> {
     '[class*="search-group"]:has(img.zn-icon[src*="icon_content_type_pdf"]) [class*="see-all"]',
     '.search-group-see-all',
   ];
+  // Snapshot the current PDF tile count so we can detect when the See All
+  // click has actually expanded the list.
+  const beforeCount = (await page.$$(SELECTORS.resultPdfTile)).length;
+
   for (const sel of candidates) {
     try {
       const loc = page.locator(sel).first();
-      if (await loc.isVisible({ timeout: 1500 })) {
+      if (await loc.isVisible({ timeout: 500 })) {
         log(`clicking "See All" via: ${sel}`);
-        await loc.click({ timeout: 3000 });
-        await page.waitForLoadState('networkidle');
-        await page.waitForTimeout(1500);
+        await loc.click({ timeout: 2000 });
+        // Poll the tile count rather than sleeping a fixed amount.
+        const deadline = Date.now() + 5000;
+        while (Date.now() < deadline) {
+          const now = (await page.$$(SELECTORS.resultPdfTile)).length;
+          if (now > beforeCount) return;
+          await page.waitForTimeout(150);
+        }
         return;
       }
     } catch {
@@ -320,10 +329,11 @@ async function dismissCookieBanner(page: Page): Promise<void> {
   for (const sel of candidates) {
     try {
       const loc = page.locator(sel).first();
-      if (await loc.isVisible({ timeout: 500 })) {
+      if (await loc.isVisible({ timeout: 200 })) {
         log(`dismissing cookie/consent banner via: ${sel}`);
-        await loc.click({ timeout: 2000 }).catch(() => undefined);
-        await page.waitForTimeout(500);
+        await loc.click({ timeout: 1500 }).catch(() => undefined);
+        // Brief settle so a re-render doesn't trip the next click.
+        await page.waitForTimeout(200);
         return;
       }
     } catch {
@@ -366,21 +376,21 @@ async function runSearch(page: Page, query: string): Promise<void> {
   // text locator first; fall back to Enter as a backstop.
   const searchByText = page.getByText('Search', { exact: true }).first();
   const clicked = await searchByText
-    .click({ timeout: 3000 })
+    .click({ timeout: 2000 })
     .then(() => true)
     .catch(() => false);
 
-  if (clicked) {
-    log('clicked the "Search" text element');
-  } else {
-    log('"Search" text element not found, pressing Enter as fallback');
+  if (!clicked) {
     await page.locator(SELECTORS.searchInput).press('Enter').catch(() => undefined);
   }
 
-  // Wait for either result tiles to appear or a "no results" message.
-  // Some result types load asynchronously, so give the page a beat to render.
-  await page.waitForLoadState('networkidle');
-  await page.waitForTimeout(2000);
+  // Wait for results to appear (or for the empty-results state to settle)
+  // rather than sleeping a fixed amount. Cap at 5s so a genuinely empty
+  // search result doesn't stall the whole flow.
+  await Promise.race([
+    page.waitForSelector(SELECTORS.resultPdfTile, { timeout: 5000 }).catch(() => null),
+    page.waitForSelector('.search-group', { timeout: 5000 }).catch(() => null),
+  ]);
 }
 
 // Search Zunos in tiers, broadening the query if narrower ones return
