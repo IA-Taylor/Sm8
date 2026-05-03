@@ -73,8 +73,17 @@ const COOKIE_PATH = '/tmp/zunos-cookies.json';
 export function createZunosClient(cfg: Config): ZunosClient {
   const configured = !!(cfg.zunosBaseUrl && cfg.zunosUsername && cfg.zunosPassword);
   if (!configured) {
+    const missing = [
+      !cfg.zunosBaseUrl && 'ZUNOS_BASE_URL',
+      !cfg.zunosUsername && 'ZUNOS_USERNAME',
+      !cfg.zunosPassword && 'ZUNOS_PASSWORD',
+    ]
+      .filter(Boolean)
+      .join(', ');
+    log(`Zunos client disabled - missing config: ${missing}`);
     return {
       async findPartInManual() {
+        log(`findPartInManual called but Zunos client is disabled (missing: ${missing})`);
         return null;
       },
       async searchPart() {
