@@ -132,7 +132,16 @@ export function createZunosClient(cfg: Config): ZunosClient {
           }
 
           log(`running search for "${modelNumber}"`);
-          await runSearch(page, modelNumber);
+          try {
+            await runSearch(page, modelNumber);
+          } catch (err) {
+            log(`runSearch failed: ${err}`);
+            await dumpDiagnostic(page, 'search-failed');
+            return null;
+          }
+
+          // Cookie / consent banners sometimes only appear after navigation.
+          await dismissCookieBanner(page);
 
           const pickedTitle = await pickAndOpenBestPdf(page, partType);
           if (!pickedTitle) {
@@ -204,6 +213,9 @@ async function openSession(cfg: Config): Promise<{
   await page.goto(cfg.zunosBaseUrl);
   await page.waitForLoadState('networkidle');
 
+  // Cookie / consent banner can intercept clicks on the login modal
+  await dismissCookieBanner(page);
+
   // Already-logged-in path: reuse session if avatar visible
   if (await page.$(SELECTORS.loginSuccessIndicator)) {
     return { browser, context, page };
@@ -241,10 +253,48 @@ async function openSession(cfg: Config): Promise<{
   }
   log('login confirmed (post-login indicator visible)');
 
+  // Some banners only appear post-login (e.g. "We use cookies on the dashboard").
+  await dismissCookieBanner(page);
+
   // Mark cookie path as referenced (placeholder for future session reuse).
   void COOKIE_PATH;
 
   return { browser, context, page };
+}
+
+// Best-effort dismissal of cookie / consent banners. Tries a list of
+// common "Accept" button patterns; silently moves on if nothing matches.
+async function dismissCookieBanner(page: Page): Promise<void> {
+  const candidates = [
+    'button:has-text("Accept all")',
+    'button:has-text("Accept All")',
+    'button:has-text("Accept Cookies")',
+    'button:has-text("Accept")',
+    'button:has-text("Allow all")',
+    'button:has-text("Allow All")',
+    'button:has-text("Allow")',
+    'button:has-text("Got it")',
+    'button:has-text("I accept")',
+    'button:has-text("OK")',
+    'button:has-text("Agree")',
+    '[id*="cookie" i] button',
+    '[id*="consent" i] button',
+    '[class*="cookie" i] button',
+    '[class*="consent" i] button',
+  ];
+  for (const sel of candidates) {
+    try {
+      const loc = page.locator(sel).first();
+      if (await loc.isVisible({ timeout: 500 })) {
+        log(`dismissing cookie/consent banner via: ${sel}`);
+        await loc.click({ timeout: 2000 }).catch(() => undefined);
+        await page.waitForTimeout(500);
+        return;
+      }
+    } catch {
+      // try next candidate
+    }
+  }
 }
 
 async function waitForLoggedIn(page: Page): Promise<boolean> {
