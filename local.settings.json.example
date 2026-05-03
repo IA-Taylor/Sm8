@@ -14,10 +14,9 @@
     "SM8_WEBHOOK_SECRET": "",
     "SM8_BOT_STAFF_UUID": "",
 
-    "ZUNOS_BASE_URL": "https://api.zunos.com",
-    "ZUNOS_CLIENT_ID": "",
-    "ZUNOS_CLIENT_SECRET": "",
-    "ZUNOS_SEARCH_PATH": "/v1/content/search",
+    "ZUNOS_BASE_URL": "https://app.zunos.com",
+    "ZUNOS_USERNAME": "",
+    "ZUNOS_PASSWORD": "",
 
     "EPAN_BASE_URL": "https://e-pan.panasonic.com.au",
     "EPAN_USERNAME": "",

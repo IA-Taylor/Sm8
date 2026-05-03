@@ -46,5 +46,6 @@ export interface PendingOrder {
 
 export type ClassifiedNote =
   | { kind: 'quote'; partNumber: string; qty: number }
+  | { kind: 'lookup'; modelNumber: string; partType: string; qty: number }
   | { kind: 'order' }
   | { kind: 'ignore' };

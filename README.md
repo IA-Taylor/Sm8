@@ -6,11 +6,14 @@ ServiceM8 → Zunos → EPAN automated part-order workflow, deployed on Azure.
 
 The bot is named **Kevin**. He only responds when the note starts with his name — anything else gets ignored.
 
-| Note (case-insensitive)                                    | Bot does                                                          |
-| ---------------------------------------------------------- | ----------------------------------------------------------------- |
-| `Kevin order ABC-123` (optionally `… 5` for qty)           | Looks the part up on Bigtincan Zunos, then on the EPAN B2B portal for price + stock, and creates a To-Do on the job asking for confirmation. |
-| `Kevin yes please order this part on EPAN`                 | Places the previously-quoted order on EPAN, closes the To-Do, and posts a confirmation note with the EPAN order reference. |
-| Anything else, including `order ABC-123` without "Kevin"   | Ignored.                                                          |
+| Note (case-insensitive)                                          | Bot does                                                          |
+| ---------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `Kevin order CWA43C2467`                                         | Looks the part up on EPAN for price + stock, creates a To-Do on the job asking for confirmation. |
+| `Kevin can you find a PCB for a CU-RZ25AKR` (or similar natural-language model lookup) | Logs into Zunos, searches for the model, picks the most service/parts-manual-looking PDF, extracts the part number for the requested part type, then runs the EPAN price/stock + To-Do flow. |
+| `Kevin yes please order this part on EPAN`                       | Places the previously-quoted order on EPAN, closes the To-Do, and posts a confirmation note with the EPAN order reference. |
+| Anything else, including `order ABC-123` without "Kevin"         | Ignored.                                                          |
+
+For the natural-language model lookup, recognised part types include: PCB, circuit board, main board, control board, fan motor, capacitor, compressor, sensor, thermistor, relay, valve, filter, pump.
 
 State for the two-step flow lives in an Azure Table Storage table keyed on `job_uuid`.
 
@@ -78,8 +81,8 @@ az deployment group create \
 KV=<keyVaultName from step 3>
 az keyvault secret set --vault-name $KV --name sm8-api-key         --value '…'
 az keyvault secret set --vault-name $KV --name sm8-webhook-secret  --value "$(openssl rand -hex 32)"
-az keyvault secret set --vault-name $KV --name zunos-client-id     --value '…'
-az keyvault secret set --vault-name $KV --name zunos-client-secret --value '…'
+az keyvault secret set --vault-name $KV --name zunos-username      --value '…'
+az keyvault secret set --vault-name $KV --name zunos-password      --value '…'
 az keyvault secret set --vault-name $KV --name epan-username       --value '…'
 az keyvault secret set --vault-name $KV --name epan-password       --value '…'
 

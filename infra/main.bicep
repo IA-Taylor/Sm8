@@ -99,8 +99,7 @@ resource functionApp 'Microsoft.Web/sites@2023-12-01' = {
         { name: 'KEY_VAULT_URL', value: keyVault.properties.vaultUri }
         { name: 'STORAGE_ACCOUNT_NAME', value: storage.name }
         { name: 'PENDING_ORDERS_TABLE', value: pendingOrdersTableName }
-        { name: 'ZUNOS_BASE_URL', value: 'https://api.zunos.com' }
-        { name: 'ZUNOS_SEARCH_PATH', value: '/v1/content/search' }
+        { name: 'ZUNOS_BASE_URL', value: 'https://app.zunos.com' }
         { name: 'EPAN_BASE_URL', value: 'https://e-pan.panasonic.com.au' }
         { name: 'SM8_BOT_STAFF_UUID', value: '' }
       ]

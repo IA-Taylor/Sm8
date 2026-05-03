@@ -39,6 +39,7 @@ describe('runQuote', () => {
         title: 'Widget',
         description: '10A Widget',
       }),
+      findPartInManual: vi.fn().mockResolvedValue(null),
     };
     epan = {
       lookup: vi.fn().mockResolvedValue({

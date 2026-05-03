@@ -6,9 +6,8 @@ export interface Config {
   sm8WebhookSecret: string;
   sm8BotStaffUuid: string;
   zunosBaseUrl: string;
-  zunosClientId: string;
-  zunosClientSecret: string;
-  zunosSearchPath: string;
+  zunosUsername: string;
+  zunosPassword: string;
   epanBaseUrl: string;
   epanUsername: string;
   epanPassword: string;
@@ -21,7 +20,6 @@ let cached: Config | null = null;
 // Plain-text config keys (read straight from env, never from Key Vault).
 const PLAIN_KEYS = [
   'ZUNOS_BASE_URL',
-  'ZUNOS_SEARCH_PATH',
   'EPAN_BASE_URL',
   'PENDING_ORDERS_TABLE',
   'STORAGE_ACCOUNT_NAME',
@@ -33,8 +31,8 @@ const PLAIN_KEYS = [
 const SECRET_KEYS = [
   'SM8_API_KEY',
   'SM8_WEBHOOK_SECRET',
-  'ZUNOS_CLIENT_ID',
-  'ZUNOS_CLIENT_SECRET',
+  'ZUNOS_USERNAME',
+  'ZUNOS_PASSWORD',
   'EPAN_USERNAME',
   'EPAN_PASSWORD',
 ] as const;
@@ -44,9 +42,8 @@ const KEY_MAP: Record<string, keyof Config> = {
   SM8_WEBHOOK_SECRET: 'sm8WebhookSecret',
   SM8_BOT_STAFF_UUID: 'sm8BotStaffUuid',
   ZUNOS_BASE_URL: 'zunosBaseUrl',
-  ZUNOS_CLIENT_ID: 'zunosClientId',
-  ZUNOS_CLIENT_SECRET: 'zunosClientSecret',
-  ZUNOS_SEARCH_PATH: 'zunosSearchPath',
+  ZUNOS_USERNAME: 'zunosUsername',
+  ZUNOS_PASSWORD: 'zunosPassword',
   EPAN_BASE_URL: 'epanBaseUrl',
   EPAN_USERNAME: 'epanUsername',
   EPAN_PASSWORD: 'epanPassword',

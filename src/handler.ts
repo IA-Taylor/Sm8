@@ -4,6 +4,7 @@ import { createEpanClient } from './clients/epan.js';
 import { createServiceM8Client } from './clients/servicem8.js';
 import { createZunosClient } from './clients/zunos.js';
 import { loadConfig } from './config.js';
+import { runLookup } from './flows/lookup.js';
 import { runOrder } from './flows/order.js';
 import { runQuote } from './flows/quote.js';
 import { createStore } from './store.js';
@@ -54,6 +55,17 @@ export async function sm8Webhook(
         {
           jobUuid: payload.job_uuid,
           partNumber: decision.partNumber,
+          qty: decision.qty,
+          requesterStaffUuid: payload.staff_uuid,
+        },
+      );
+    } else if (decision.kind === 'lookup') {
+      await runLookup(
+        { zunos, epan, sm8, store, botStaffUuid: cfg.sm8BotStaffUuid },
+        {
+          jobUuid: payload.job_uuid,
+          modelNumber: decision.modelNumber,
+          partType: decision.partType,
           qty: decision.qty,
           requesterStaffUuid: payload.staff_uuid,
         },

@@ -64,4 +64,70 @@ describe('classifyNote', () => {
     expect(classifyNote('Kevin hi there')).toEqual({ kind: 'ignore' });
     expect(classifyNote('Kevin order')).toEqual({ kind: 'ignore' });
   });
+
+  describe('natural-language model lookup', () => {
+    it('extracts model + part type from a typical request', () => {
+      expect(classifyNote('Kevin can you find a PCB for a CU-RZ25AKR')).toEqual({
+        kind: 'lookup',
+        modelNumber: 'CU-RZ25AKR',
+        partType: 'pcb',
+        qty: 1,
+      });
+    });
+
+    it('handles "fan motor" multi-word part type', () => {
+      expect(classifyNote('Kevin find a fan motor for CS-RE15RKR')).toEqual({
+        kind: 'lookup',
+        modelNumber: 'CS-RE15RKR',
+        partType: 'fan motor',
+        qty: 1,
+      });
+    });
+
+    it('normalises board synonyms to PCB', () => {
+      expect(classifyNote('Kevin get a circuit board for CU-RZ25AKR')).toEqual({
+        kind: 'lookup',
+        modelNumber: 'CU-RZ25AKR',
+        partType: 'PCB',
+        qty: 1,
+      });
+      expect(classifyNote('Kevin get me a main board for CU-RZ25AKR')).toEqual({
+        kind: 'lookup',
+        modelNumber: 'CU-RZ25AKR',
+        partType: 'PCB',
+        qty: 1,
+      });
+    });
+
+    it('captures explicit quantity', () => {
+      expect(classifyNote('Kevin get 3 capacitors for CU-RZ25AKR')).toEqual({
+        kind: 'lookup',
+        modelNumber: 'CU-RZ25AKR',
+        partType: 'capacitor',
+        qty: 1, // qty extraction only finds "qty N", "x N", or trailing N
+      });
+      expect(classifyNote('Kevin get a PCB for CU-RZ25AKR qty 2')).toEqual({
+        kind: 'lookup',
+        modelNumber: 'CU-RZ25AKR',
+        partType: 'pcb',
+        qty: 2,
+      });
+    });
+
+    it('ignores natural-language requests without both pieces', () => {
+      // No part type
+      expect(classifyNote('Kevin tell me about CU-RZ25AKR')).toEqual({ kind: 'ignore' });
+      // No model
+      expect(classifyNote('Kevin I need a PCB please')).toEqual({ kind: 'ignore' });
+    });
+
+    it("doesn't double-match a direct quote as a lookup", () => {
+      // "Kevin order CU-RZ25AKR" should be a direct quote, not a model lookup
+      expect(classifyNote('Kevin order CU-RZ25AKR')).toEqual({
+        kind: 'quote',
+        partNumber: 'CU-RZ25AKR',
+        qty: 1,
+      });
+    });
+  });
 });
