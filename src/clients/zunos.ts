@@ -143,7 +143,7 @@ export function createZunosClient(cfg: Config): ZunosClient {
           // Cookie / consent banners sometimes only appear after navigation.
           await dismissCookieBanner(page);
 
-          const pickedTitle = await pickAndOpenBestPdf(page, partType);
+          const pickedTitle = await pickAndOpenBestPdf(page, partType, modelNumber);
           if (!pickedTitle) {
             await dumpDiagnostic(page, 'no-pdf-results');
             return null;
@@ -349,7 +349,11 @@ async function runSearch(page: Page, query: string): Promise<void> {
 // Score each PDF result by how service-manual-looking its title is, click
 // the highest-scoring one, and return its title. Returns null if no PDF
 // result was visible.
-async function pickAndOpenBestPdf(page: Page, partType: string): Promise<string | null> {
+async function pickAndOpenBestPdf(
+  page: Page,
+  partType: string,
+  modelNumber: string,
+): Promise<string | null> {
   await page
     .waitForSelector(SELECTORS.resultPdfTile, { timeout: 10_000 })
     .catch(() => undefined);
@@ -361,19 +365,28 @@ async function pickAndOpenBestPdf(page: Page, partType: string): Promise<string 
   }
 
   log(`found ${tiles.length} PDF result(s) on the page; scoring them...`);
-  let bestIdx = 0;
+  let bestIdx = -1;
   let bestScore = -Infinity;
   let bestTitle = '';
   for (let i = 0; i < tiles.length; i++) {
     const titleEl = await tiles[i]!.$('.catalog-text-bold');
     const title = ((await titleEl?.textContent()) ?? '').trim();
-    const score = scorePdfTitle(title, partType);
+    const score = scorePdfTitle(title, partType, modelNumber);
     log(`  [${i}] score=${score}  title="${title}"`);
     if (score > bestScore) {
       bestScore = score;
       bestIdx = i;
       bestTitle = title;
     }
+  }
+
+  // Refuse to pick a PDF that doesn't even mention the model. Better to
+  // come back null than to confidently extract a wrong part number.
+  if (bestScore < 5) {
+    log(
+      `refusing to pick a PDF — top score is only ${bestScore}, none looked like a real match for ${modelNumber}`,
+    );
+    return null;
   }
 
   log(`picking [${bestIdx}] (score=${bestScore}): "${bestTitle}"`);
@@ -383,15 +396,27 @@ async function pickAndOpenBestPdf(page: Page, partType: string): Promise<string 
 }
 
 // Higher score = more likely to be the right document for finding parts.
-export function scorePdfTitle(title: string, partType: string): number {
+export function scorePdfTitle(title: string, partType: string, modelNumber = ''): number {
   const t = title.toLowerCase();
+  const m = modelNumber.toLowerCase();
   let score = 0;
+
+  // STRONG signal: title mentions the specific model number.
+  // Without this, results that just match the family are too easy to misread.
+  if (m && t.includes(m)) {
+    score += 20;
+  } else if (m) {
+    // Partial: e.g. "RZ25AKR" inside a title like "RZ Series Service Manual"
+    const modelCore = m.replace(/^[a-z]+-/, ''); // CU-RZ25AKR -> rz25akr
+    if (modelCore && t.includes(modelCore)) score += 8;
+  }
+
   if (t.includes('spare parts') || t.includes('parts list')) score += 10;
   if (t.includes('service manual')) score += 8;
   if (t.includes(partType.toLowerCase())) score += 5;
   if (t.includes('service')) score += 3;
   if (t.includes('manual')) score += 2;
-  if (t.includes('install')) score -= 2; // installation guide unlikely to have parts
+  if (t.includes('install')) score -= 2;
   if (t.includes('brochure') || t.includes('catalogue')) score -= 4;
   return score;
 }
@@ -427,6 +452,48 @@ async function extractPdfText(bytes: Buffer): Promise<string | null> {
   }
 }
 
+// Words that look like part numbers but aren't — section headings,
+// units, generic abbreviations from service manuals.
+const PART_NUMBER_REJECTS = new Set([
+  'STEP',
+  'FIG',
+  'FIGURE',
+  'PAGE',
+  'CHAPTER',
+  'SECTION',
+  'TABLE',
+  'NOTE',
+  'WARNING',
+  'CAUTION',
+  'MODEL',
+  'TYPE',
+  'PART',
+  'NO',
+  'REF',
+  'ITEM',
+  'QTY',
+  'PCS',
+  'UNIT',
+  'AC',
+  'DC',
+  'VOLT',
+  'AMP',
+  'WATT',
+  'KW',
+  'HZ',
+  'MHZ',
+  'GHZ',
+  'MM',
+  'CM',
+  'INCH',
+  'KG',
+  'IN',
+  'OUT',
+  'MAX',
+  'MIN',
+  'STD',
+]);
+
 // Search the extracted PDF text for the requested part type, then look for
 // a part-number-shaped token in nearby text. Heuristic but covers the
 // common parts-list layout: "PCB ASSY ........ CWA73C0001"
@@ -440,19 +507,41 @@ export function findPartNumberInText(text: string, partType: string): string | n
     const upper = line.toUpperCase();
     if (!partKeywords.some((kw) => upper.includes(kw))) continue;
 
-    // Scan this line and the next two for a likely part-number token.
-    const window = lines.slice(i, Math.min(lines.length, i + 3)).join(' ').toUpperCase();
+    // Scan this line and the next four for a likely part-number token.
+    const window = lines.slice(i, Math.min(lines.length, i + 5)).join(' ').toUpperCase();
     const matches = window.match(partTokenRe) ?? [];
     for (const candidate of matches) {
-      // Reject pure model-number-shaped tokens that are obviously the model itself
-      if (partKeywords.some((kw) => candidate.includes(kw))) continue;
-      // Require at least one digit AND at least 6 characters total
-      if (candidate.length < 6) continue;
-      if (!/\d/.test(candidate)) continue;
+      if (!isPlausiblePartNumber(candidate, partKeywords)) continue;
       return candidate;
     }
   }
   return null;
+}
+
+// Real Panasonic part numbers tend to be 7+ chars with at least 3 digits
+// (e.g. CWA73C0001, L6CBYYYL0334, CWA43C2467). They never start with a
+// section-heading word like "STEP", "FIG", "PAGE".
+function isPlausiblePartNumber(candidate: string, partKeywords: string[]): boolean {
+  // Reject model-or-keyword-shaped tokens
+  if (partKeywords.some((kw) => candidate.includes(kw))) return false;
+
+  // Length floor
+  if (candidate.length < 7) return false;
+
+  // Must have at least 3 digits total
+  const digitCount = (candidate.match(/\d/g) ?? []).length;
+  if (digitCount < 3) return false;
+
+  // Reject if the alpha prefix matches a known section/heading word
+  const alphaPrefix = candidate.match(/^[A-Z]+/)?.[0] ?? '';
+  if (PART_NUMBER_REJECTS.has(alphaPrefix)) return false;
+
+  // Reject if the whole alpha part (chars before any digit/dash) looks
+  // like a heading word
+  const firstAlphaWord = candidate.split(/[-/.0-9]/)[0] ?? '';
+  if (PART_NUMBER_REJECTS.has(firstAlphaWord)) return false;
+
+  return true;
 }
 
 function expandPartTypeKeywords(partType: string): string[] {
