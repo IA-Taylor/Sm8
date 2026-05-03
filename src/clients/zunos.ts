@@ -4,6 +4,7 @@ import pdfParse from 'pdf-parse';
 import type { Browser, BrowserContext, Page } from 'playwright-core';
 import type { Config } from '../config.js';
 import type { ZunosPart } from '../types.js';
+import { createClaudeClient, type ClaudeClient } from './claude.js';
 
 function log(msg: string): void {
   console.error(`[zunos] ${msg}`);
@@ -71,6 +72,14 @@ const SCREEN_TIMEOUT_MS = 30_000;
 const COOKIE_PATH = '/tmp/zunos-cookies.json';
 
 export function createZunosClient(cfg: Config): ZunosClient {
+  const claude: ClaudeClient = createClaudeClient(cfg);
+  const claudeEnabled = !!cfg.anthropicApiKey;
+  if (claudeEnabled) {
+    log('Claude lookup enabled — will use Claude API for part-number extraction');
+  } else {
+    log('Claude lookup disabled (ANTHROPIC_API_KEY not set) — using regex extraction only');
+  }
+
   const configured = !!(cfg.zunosBaseUrl && cfg.zunosUsername && cfg.zunosPassword);
   if (!configured) {
     const missing = [
@@ -182,6 +191,21 @@ export function createZunosClient(cfg: Config): ZunosClient {
             writeFileSync('/tmp/zunos-debug-extracted.txt', text);
           } catch {
             // best-effort
+          }
+
+          // Prefer Claude for the actual reading step when configured.
+          // PDFs vary too much for regex to reliably handle every layout.
+          if (claudeEnabled) {
+            const claudeResult = await claude.findPartNumber(text, modelNumber, partType);
+            if (claudeResult.partNumber) {
+              log(
+                `Claude returned: ${claudeResult.partNumber} ` +
+                  `(confidence: ${claudeResult.confidence}, ${claudeResult.reasoning})`,
+              );
+              return claudeResult.partNumber;
+            }
+            log(`Claude couldn't find a part number: ${claudeResult.reasoning}`);
+            // Fall through to regex as a backup
           }
 
           const partNumber = findPartNumberInText(text, partType, modelNumber);

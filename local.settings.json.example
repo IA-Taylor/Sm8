@@ -20,6 +20,8 @@
 
     "EPAN_BASE_URL": "https://e-pan.panasonic.com.au",
     "EPAN_USERNAME": "",
-    "EPAN_PASSWORD": ""
+    "EPAN_PASSWORD": "",
+
+    "ANTHROPIC_API_KEY": ""
   }
 }

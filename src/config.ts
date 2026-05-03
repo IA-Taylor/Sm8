@@ -13,6 +13,7 @@ export interface Config {
   epanPassword: string;
   pendingOrdersTable: string;
   storageAccountName: string;
+  anthropicApiKey: string;
 }
 
 let cached: Config | null = null;
@@ -35,6 +36,7 @@ const SECRET_KEYS = [
   'ZUNOS_PASSWORD',
   'EPAN_USERNAME',
   'EPAN_PASSWORD',
+  'ANTHROPIC_API_KEY',
 ] as const;
 
 const KEY_MAP: Record<string, keyof Config> = {
@@ -49,6 +51,7 @@ const KEY_MAP: Record<string, keyof Config> = {
   EPAN_PASSWORD: 'epanPassword',
   PENDING_ORDERS_TABLE: 'pendingOrdersTable',
   STORAGE_ACCOUNT_NAME: 'storageAccountName',
+  ANTHROPIC_API_KEY: 'anthropicApiKey',
 };
 
 export async function loadConfig(): Promise<Config> {

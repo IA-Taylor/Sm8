@@ -86,6 +86,13 @@ az keyvault secret set --vault-name $KV --name zunos-password      --value '…'
 az keyvault secret set --vault-name $KV --name epan-username       --value '…'
 az keyvault secret set --vault-name $KV --name epan-password       --value '…'
 
+# Optional but recommended: Claude API key for intelligent PDF reading.
+# Without it, model-based part lookups ("Kevin can you find a PCB for
+# CU-RZ25AKR") fall back to regex extraction which is unreliable for
+# parts tables in service-manual PDFs. With it, Claude reads the PDF
+# directly. Cost: ~$5-30/month at typical usage.
+az keyvault secret set --vault-name $KV --name anthropic-api-key   --value 'sk-ant-...'
+
 # Save the SM8_WEBHOOK_SECRET value — you need it again to register the webhook.
 
 # 5. Build and publish the function code
