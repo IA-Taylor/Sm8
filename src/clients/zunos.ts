@@ -511,9 +511,17 @@ async function pickAndOpenBestPdf(
 // Three ways to qualify:
 //   1. Full model number appears in the title (e.g. "CU-RZ25AKR ...")
 //   2. The model "core" (no prefix) appears (e.g. "RZ25AKR ..." for CU-RZ25AKR)
+//      AND no conflicting prefix is mentioned in the title
 //   3. The title's coverage range includes the target capacity AND the
 //      title's suffix matches the model's suffix (e.g. "RZ25-80TKR..." for
 //      CS-RZ50TKR — covers 25-80, both have TKR suffix)
+//      AND no conflicting prefix is mentioned in the title
+//
+// "Conflicting prefix" = the title mentions a CS/CU/S/U-style prefix that
+// isn't ours AND ours isn't also mentioned. This catches the indoor vs
+// outdoor confusion: a "CS-RZ25AKR Service Manual" must NOT be accepted
+// when the requester asked about CU-RZ25AKR (different units, different
+// parts, even though they share the model "core").
 export function titleMentionsModel(title: string, modelNumber: string): boolean {
   if (!modelNumber) return false;
   const t = title.toLowerCase();
@@ -521,18 +529,41 @@ export function titleMentionsModel(title: string, modelNumber: string): boolean 
 
   if (t.includes(m)) return true;
 
+  const decoded = decodeModelStructure(modelNumber);
+  if (!decoded) return false;
+
+  if (hasConflictingPrefix(title, decoded.prefix)) return false;
+
   const noPrefix = m.replace(/^[a-z]+-/, '');
   if (noPrefix !== m && t.includes(noPrefix)) return true;
 
-  const decoded = decodeModelStructure(modelNumber);
   const range = parseCoverageRange(title);
-  if (decoded && range) {
+  if (range) {
     const inRange = decoded.capacity >= range.lo && decoded.capacity <= range.hi;
     const suffixMatch = decoded.suffix && t.includes(decoded.suffix.toLowerCase());
     if (inRange && suffixMatch) return true;
   }
 
   return false;
+}
+
+// Detect whether the title carries a CS/CU/S/U-style prefix that doesn't
+// match ours AND ours isn't also mentioned in the title. We list longer
+// prefixes (CS, CU) before shorter ones (S, U) so the alternation in the
+// regex prefers the longer match.
+export function hasConflictingPrefix(title: string, ourPrefix: string): boolean {
+  if (!ourPrefix) return false;
+  const ours = ourPrefix.toUpperCase();
+  const re = /\b(CS|CU|S|U)-(?=[A-Z0-9])/g;
+  let foundOther = false;
+  let foundOurs = false;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(title)) !== null) {
+    const found = m[1]!.toUpperCase();
+    if (found === ours) foundOurs = true;
+    else foundOther = true;
+  }
+  return foundOther && !foundOurs;
 }
 
 // Higher score = more likely to be the right document for finding parts.

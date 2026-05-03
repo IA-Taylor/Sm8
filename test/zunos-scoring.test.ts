@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildSearchTiers,
   decodeModelStructure,
+  hasConflictingPrefix,
   parseCoverageRange,
   scorePdfTitle,
   titleMentionsModel,
@@ -95,6 +96,44 @@ describe('titleMentionsModel', () => {
   it('rejects unrelated titles entirely', () => {
     expect(titleMentionsModel('Some Other Product Brochure', 'CU-RZ25AKR')).toBe(false);
     expect(titleMentionsModel('Generic Service Manual', 'CU-RZ25AKR')).toBe(false);
+  });
+
+  it('rejects indoor pair when asked for outdoor (and vice versa)', () => {
+    // CS = indoor, CU = outdoor. Same model core, different units.
+    expect(titleMentionsModel('CS-RZ25AKR Service Manual', 'CU-RZ25AKR')).toBe(false);
+    expect(titleMentionsModel('CU-RZ25AKR Service Manual', 'CS-RZ25AKR')).toBe(false);
+    // S = PAC indoor, U = PAC outdoor
+    expect(titleMentionsModel('U-160PE2R8A Exploded View', 'S-160PE1R5A')).toBe(false);
+  });
+
+  it('accepts a combined manual that lists both indoor and outdoor pair', () => {
+    expect(
+      titleMentionsModel('CS-RZ25AKR / CU-RZ25AKR Service Manual', 'CU-RZ25AKR'),
+    ).toBe(true);
+  });
+
+  it('accepts a prefix-less title even when the model has a prefix', () => {
+    // Some Panasonic docs drop the CS-/CU- prefix in titles entirely.
+    expect(titleMentionsModel('RZ25-80TKR Service Manual', 'CS-RZ50TKR')).toBe(true);
+  });
+});
+
+describe('hasConflictingPrefix', () => {
+  it('detects a different prefix without ours present', () => {
+    expect(hasConflictingPrefix('CS-RZ25AKR Service Manual', 'CU')).toBe(true);
+    expect(hasConflictingPrefix('U-160PE2R8A Exploded View', 'S')).toBe(true);
+  });
+
+  it('passes when ours is also present', () => {
+    expect(hasConflictingPrefix('CS-RZ25AKR / CU-RZ25AKR Service Manual', 'CU')).toBe(false);
+  });
+
+  it('passes when no prefix is in the title at all', () => {
+    expect(hasConflictingPrefix('RZ25-80TKR Service Manual', 'CU')).toBe(false);
+  });
+
+  it('passes when our prefix matches', () => {
+    expect(hasConflictingPrefix('CU-RZ25AKR Service Manual', 'CU')).toBe(false);
   });
 });
 
