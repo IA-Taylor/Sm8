@@ -95,6 +95,15 @@ describe('titleMentionsModel', () => {
     expect(titleMentionsModel('RZ25-80TKR Service Manual', 'CS-RZ50AKR')).toBe(false);
   });
 
+  it('rejects coverage-range titles whose series does not match', () => {
+    // Z20-71AKR is the Z series; CU-RZ25AKR is the RZ series. Different
+    // product families even though the suffix and capacity look similar.
+    expect(titleMentionsModel('Z20-71AKR Service Manual', 'CU-RZ25AKR')).toBe(false);
+    expect(titleMentionsModel('U25-80AKR Service Manual', 'CU-RZ25AKR')).toBe(false);
+    // But the right series is accepted
+    expect(titleMentionsModel('RZ25-71AKR Service Manual', 'CU-RZ25AKR')).toBe(true);
+  });
+
   it('rejects unrelated titles entirely', () => {
     expect(titleMentionsModel('Some Other Product Brochure', 'CU-RZ25AKR')).toBe(false);
     expect(titleMentionsModel('Generic Service Manual', 'CU-RZ25AKR')).toBe(false);
@@ -219,6 +228,15 @@ describe('scorePdfTitle', () => {
   it('penalises Operating Instructions and Brochures', () => {
     expect(scorePdfTitle('CU-RZ25AKR Operating Instructions', 'PCB', 'CU-RZ25AKR')).toBeLessThan(
       scorePdfTitle('CU-RZ25AKR Service Manual', 'PCB', 'CU-RZ25AKR'),
+    );
+  });
+
+  it('treats common typos of "Service Manual" as a service manual', () => {
+    expect(scorePdfTitle('RZ25-71AKR Service Manul', 'PCB', 'CU-RZ25AKR')).toBeGreaterThan(
+      scorePdfTitle('CU-RZ25-95AKR Installation Instructions', 'PCB', 'CU-RZ25AKR'),
+    );
+    expect(scorePdfTitle('RZ25-71AKR Service Manuel', 'PCB', 'CU-RZ25AKR')).toBeGreaterThan(
+      scorePdfTitle('CU-RZ25-95AKR Installation Instructions', 'PCB', 'CU-RZ25AKR'),
     );
   });
 

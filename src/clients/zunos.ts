@@ -551,7 +551,10 @@ export function titleMentionsModel(title: string, modelNumber: string): boolean 
   if (range) {
     const inRange = decoded.capacity >= range.lo && decoded.capacity <= range.hi;
     const suffixMatch = decoded.suffix && t.includes(decoded.suffix.toLowerCase());
-    if (inRange && suffixMatch) return true;
+    // Series must match too: RZ20-71AKR is RZ family, Z20-71AKR is Z family
+    // (different products), even though they share the AKR suffix.
+    const seriesMatch = !decoded.series || t.includes(decoded.series.toLowerCase());
+    if (inRange && suffixMatch && seriesMatch) return true;
   }
 
   return false;
@@ -587,10 +590,13 @@ export function scorePdfTitle(title: string, partType: string, modelNumber = '')
   let score = 0;
 
   // --- Document type ---
+  // Tolerant of common typos seen in real Zunos titles ("Manul", "Manuel",
+  // "Manaul" — all are intended to be "Manual").
+  const isServiceManual = /service\s+man[au]+l\b/i.test(title);
   if (t.includes('exploded view') && t.includes('parts list')) score += 50;
   else if (t.includes('exploded views') && t.includes('parts list')) score += 50;
   else if (t.includes('exploded') || t.includes('parts list')) score += 40;
-  else if (t.includes('service manual')) score += 30;
+  else if (isServiceManual) score += 30;
   else if (t.includes('technical data')) score += 25;
   else if (t.includes('parts change') || t.includes('parts notice')) score += 15;
   else if (t.includes('installation')) score += 5;
