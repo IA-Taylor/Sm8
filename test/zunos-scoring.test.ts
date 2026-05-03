@@ -4,6 +4,7 @@ import {
   decodeModelStructure,
   parseCoverageRange,
   scorePdfTitle,
+  titleMentionsModel,
 } from '../src/clients/zunos.js';
 
 describe('decodeModelStructure', () => {
@@ -66,6 +67,34 @@ describe('buildSearchTiers', () => {
 
   it('handles model strings without an internal series', () => {
     expect(buildSearchTiers('S-160PE1R5A')).toEqual(['S-160PE1R5A', '160PE1R5A', ' PE1R5A']);
+  });
+});
+
+describe('titleMentionsModel', () => {
+  it('accepts the full model code in the title', () => {
+    expect(titleMentionsModel('CU-RZ25AKR Service Manual', 'CU-RZ25AKR')).toBe(true);
+  });
+
+  it('accepts the model-core (no prefix) in the title', () => {
+    expect(titleMentionsModel('RZ25AKR Exploded View & Parts List', 'CU-RZ25AKR')).toBe(true);
+  });
+
+  it('accepts a coverage-range title with matching suffix', () => {
+    expect(titleMentionsModel('RZ25-80TKR Service Manual', 'CS-RZ50TKR')).toBe(true);
+    expect(titleMentionsModel('S-60-160PE1R5A Service Manual', 'S-100PE1R5A')).toBe(true);
+  });
+
+  it('rejects coverage-range titles whose range excludes the target capacity', () => {
+    expect(titleMentionsModel('S-60-140PE1R5A Service Manual', 'S-160PE1R5A')).toBe(false);
+  });
+
+  it('rejects coverage-range titles whose suffix does not match', () => {
+    expect(titleMentionsModel('RZ25-80TKR Service Manual', 'CS-RZ50AKR')).toBe(false);
+  });
+
+  it('rejects unrelated titles entirely', () => {
+    expect(titleMentionsModel('Some Other Product Brochure', 'CU-RZ25AKR')).toBe(false);
+    expect(titleMentionsModel('Generic Service Manual', 'CU-RZ25AKR')).toBe(false);
   });
 });
 

@@ -450,7 +450,7 @@ export function parseCoverageRange(title: string): { lo: number; hi: number } | 
 
 // Score each PDF result by how service-manual-looking its title is, click
 // the highest-scoring one, and return its title. Returns null if no PDF
-// result was visible.
+// result was visible OR none of them are about the requested model.
 async function pickAndOpenBestPdf(
   page: Page,
   partType: string,
@@ -470,35 +470,69 @@ async function pickAndOpenBestPdf(
     return null;
   }
 
-  log(`found ${tiles.length} PDF result(s) on the page; scoring them...`);
-  let bestIdx = -1;
-  let bestScore = -Infinity;
-  let bestTitle = '';
+  // Read every tile's title up-front so we can log them and filter cleanly.
+  const candidates: { idx: number; title: string; score: number; viable: boolean }[] = [];
   for (let i = 0; i < tiles.length; i++) {
     const titleEl = await tiles[i]!.$('.catalog-text-bold');
     const title = ((await titleEl?.textContent()) ?? '').trim();
+    const viable = titleMentionsModel(title, modelNumber);
     const score = scorePdfTitle(title, partType, modelNumber);
-    log(`  [${i}] score=${score}  title="${title}"`);
-    if (score > bestScore) {
-      bestScore = score;
-      bestIdx = i;
-      bestTitle = title;
-    }
+    candidates.push({ idx: i, title, score, viable });
   }
 
-  // Refuse to pick a PDF that doesn't even mention the model. Better to
-  // come back null than to confidently extract a wrong part number.
-  if (bestScore < 5) {
+  log(`found ${tiles.length} PDF result(s); scoring them...`);
+  for (const c of candidates) {
+    log(`  [${c.idx}] score=${c.score} viable=${c.viable}  title="${c.title}"`);
+  }
+
+  // HARD FILTER: only consider PDFs whose title actually mentions the model
+  // (full code or model-core after the prefix). Without this the picker
+  // would happily click any "X Service Manual" no matter what model X is.
+  const viable = candidates.filter((c) => c.viable);
+  if (viable.length === 0) {
     log(
-      `refusing to pick a PDF — top score is only ${bestScore}, none looked like a real match for ${modelNumber}`,
+      `none of the ${candidates.length} PDF titles mention model "${modelNumber}". ` +
+        `Refusing to guess; will fall back to asking the human for the part number.`,
     );
     return null;
   }
 
-  log(`picking [${bestIdx}] (score=${bestScore}): "${bestTitle}"`);
-  await tiles[bestIdx]!.click();
+  // Among viable candidates, pick the highest scorer.
+  viable.sort((a, b) => b.score - a.score);
+  const winner = viable[0]!;
+  log(`picking [${winner.idx}] (score=${winner.score}): "${winner.title}"`);
+
+  await tiles[winner.idx]!.click();
   await page.waitForLoadState('networkidle');
-  return bestTitle;
+  return winner.title;
+}
+
+// Hard filter: does this PDF title plausibly cover the requested model?
+// Three ways to qualify:
+//   1. Full model number appears in the title (e.g. "CU-RZ25AKR ...")
+//   2. The model "core" (no prefix) appears (e.g. "RZ25AKR ..." for CU-RZ25AKR)
+//   3. The title's coverage range includes the target capacity AND the
+//      title's suffix matches the model's suffix (e.g. "RZ25-80TKR..." for
+//      CS-RZ50TKR — covers 25-80, both have TKR suffix)
+export function titleMentionsModel(title: string, modelNumber: string): boolean {
+  if (!modelNumber) return false;
+  const t = title.toLowerCase();
+  const m = modelNumber.toLowerCase();
+
+  if (t.includes(m)) return true;
+
+  const noPrefix = m.replace(/^[a-z]+-/, '');
+  if (noPrefix !== m && t.includes(noPrefix)) return true;
+
+  const decoded = decodeModelStructure(modelNumber);
+  const range = parseCoverageRange(title);
+  if (decoded && range) {
+    const inRange = decoded.capacity >= range.lo && decoded.capacity <= range.hi;
+    const suffixMatch = decoded.suffix && t.includes(decoded.suffix.toLowerCase());
+    if (inRange && suffixMatch) return true;
+  }
+
+  return false;
 }
 
 // Higher score = more likely to be the right document for finding parts.
