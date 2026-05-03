@@ -184,7 +184,7 @@ export function createZunosClient(cfg: Config): ZunosClient {
             // best-effort
           }
 
-          const partNumber = findPartNumberInText(text, partType);
+          const partNumber = findPartNumberInText(text, partType, modelNumber);
           if (!partNumber) {
             log(
               `no part number found near "${partType}" keyword in PDF "${pickedTitle}". ` +
@@ -709,11 +709,24 @@ const PART_NUMBER_REJECTS = new Set([
 // Search the extracted PDF text for the requested part type, then look for
 // a part-number-shaped token in nearby text. Heuristic but covers the
 // common parts-list layout: "PCB ASSY ........ CWA73C0001"
-export function findPartNumberInText(text: string, partType: string): string | null {
+//
+// When modelNumber is provided AND the PDF appears to be a combined
+// indoor+outdoor manual, scope the search to the section about that
+// specific model. Without this, "CU-RZ25AKR PCB" would happily return the
+// first PCB part number it found, which in a combined manual is usually
+// the CS- (indoor) part, not the CU- (outdoor) one we wanted.
+export function findPartNumberInText(
+  text: string,
+  partType: string,
+  modelNumber = '',
+): string | null {
   const partKeywords = expandPartTypeKeywords(partType);
   const partTokenRe = /\b[A-Z][A-Z0-9]{2,}(?:[-/.][A-Z0-9]+)*\b/g;
 
-  const lines = text.split(/\r?\n/);
+  const scoped = scopeToModelSection(text, modelNumber);
+  const searchText = scoped ?? text;
+
+  const lines = searchText.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
     const upper = line.toUpperCase();
@@ -728,6 +741,73 @@ export function findPartNumberInText(text: string, partType: string): string | n
     }
   }
   return null;
+}
+
+// Locate the section of a combined-manual PDF that's about the requested
+// model and return just that slice of text. Strategy:
+//
+//   1. Look for a heading line that contains the exact model number.
+//      That's almost always how Panasonic labels the start of each
+//      model's parts table.
+//   2. If that's not found, fall back to looking for an INDOOR/OUTDOOR
+//      section heading whose orientation matches our prefix (CS/S =
+//      indoor, CU/U = outdoor).
+//   3. End the slice at whichever comes first: a heading mentioning a
+//      different model, or the opposite-orientation section header.
+//
+// Returns null if no reliable scoping point can be found — caller falls
+// back to scanning the whole document.
+export function scopeToModelSection(text: string, modelNumber: string): string | null {
+  if (!modelNumber) return null;
+  const decoded = decodeModelStructure(modelNumber);
+  if (!decoded) return null;
+
+  const lines = text.split(/\r?\n/);
+  const upperLines = lines.map((l) => l.toUpperCase());
+  const target = modelNumber.toUpperCase();
+  const isOutdoor = decoded.prefix === 'CU' || decoded.prefix === 'U';
+  const ourSection = isOutdoor ? 'OUTDOOR' : 'INDOOR';
+  const otherSection = isOutdoor ? 'INDOOR' : 'OUTDOOR';
+
+  // Step 1: find the first line containing our exact model code.
+  let start = upperLines.findIndex((l) => l.includes(target));
+
+  // Step 2: fall back to INDOOR/OUTDOOR section headings.
+  if (start < 0) {
+    start = upperLines.findIndex(
+      (l) => l.includes(ourSection) && (l.includes('UNIT') || l.includes('PARTS')),
+    );
+  }
+  if (start < 0) return null;
+
+  // Step 3: find where this model's section ends.
+  let end = lines.length;
+  for (let i = start + 1; i < upperLines.length; i++) {
+    const l = upperLines[i]!;
+
+    // A heading mentioning the opposite-orientation section
+    if (l.includes(otherSection) && (l.includes('UNIT') || l.includes('PARTS'))) {
+      end = i;
+      break;
+    }
+
+    // A model code with a different prefix to ours
+    const otherModelRe = /\b(CS|CU|S|U)-[A-Z0-9]/g;
+    let m: RegExpExecArray | null;
+    let foundDifferent = false;
+    while ((m = otherModelRe.exec(l)) !== null) {
+      if (m[1]!.toUpperCase() !== decoded.prefix) {
+        foundDifferent = true;
+        break;
+      }
+    }
+    if (foundDifferent) {
+      end = i;
+      break;
+    }
+  }
+
+  return lines.slice(start, end).join('\n');
 }
 
 // Real Panasonic part numbers tend to be 7+ chars with at least 3 digits

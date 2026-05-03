@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   buildSearchTiers,
   decodeModelStructure,
+  findPartNumberInText,
   hasConflictingPrefix,
   parseCoverageRange,
+  scopeToModelSection,
   scorePdfTitle,
   titleMentionsModel,
 } from '../src/clients/zunos.js';
@@ -115,6 +117,57 @@ describe('titleMentionsModel', () => {
   it('accepts a prefix-less title even when the model has a prefix', () => {
     // Some Panasonic docs drop the CS-/CU- prefix in titles entirely.
     expect(titleMentionsModel('RZ25-80TKR Service Manual', 'CS-RZ50TKR')).toBe(true);
+  });
+});
+
+describe('scopeToModelSection + findPartNumberInText', () => {
+  const combinedManual = `
+INDOOR UNIT PARTS LIST
+CS-RZ25AKR
+
+REF NO.   PART NAME              PART NUMBER
+1         PCB ASSEMBLY           CWA73C0001
+2         FAN MOTOR              CWA98F1234
+3         CAPACITOR              CWA77B5555
+
+OUTDOOR UNIT PARTS LIST
+CU-RZ25AKR
+
+REF NO.   PART NAME              PART NUMBER
+1         PCB ASSEMBLY           CWA73D2222
+2         FAN MOTOR              CWA98F5555
+3         COMPRESSOR             CWA12C9999
+`;
+
+  it('scopes to the OUTDOOR section when asked about CU- model', () => {
+    const scoped = scopeToModelSection(combinedManual, 'CU-RZ25AKR');
+    expect(scoped).toBeTruthy();
+    expect(scoped).toContain('CU-RZ25AKR');
+    expect(scoped).toContain('CWA73D2222'); // outdoor PCB
+    expect(scoped).not.toContain('CWA73C0001'); // indoor PCB excluded
+  });
+
+  it('scopes to the INDOOR section when asked about CS- model', () => {
+    const scoped = scopeToModelSection(combinedManual, 'CS-RZ25AKR');
+    expect(scoped).toBeTruthy();
+    expect(scoped).toContain('CS-RZ25AKR');
+    expect(scoped).toContain('CWA73C0001'); // indoor PCB
+    // The scoped slice ends at the OUTDOOR header so the outdoor PCB
+    // shouldn't be in scope.
+    expect(scoped).not.toContain('CWA73D2222');
+  });
+
+  it('returns the OUTDOOR PCB part number when extracting from the combined manual', () => {
+    expect(findPartNumberInText(combinedManual, 'PCB', 'CU-RZ25AKR')).toBe('CWA73D2222');
+  });
+
+  it('returns the INDOOR PCB part number when extracting for CS-', () => {
+    expect(findPartNumberInText(combinedManual, 'PCB', 'CS-RZ25AKR')).toBe('CWA73C0001');
+  });
+
+  it('returns null when no model is given and falls back to whole-doc scan', () => {
+    // Without scoping, returns the first PCB in the document
+    expect(findPartNumberInText(combinedManual, 'PCB')).toBe('CWA73C0001');
   });
 });
 
