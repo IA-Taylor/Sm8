@@ -756,17 +756,19 @@ export function findPartNumberInText(
   return null;
 }
 
-// Locate the section of a combined-manual PDF that's about the requested
+// Locate the section of a multi-model PDF that's about the requested
 // model and return just that slice of text. Strategy:
 //
-//   1. Look for a heading line that contains the exact model number.
-//      That's almost always how Panasonic labels the start of each
-//      model's parts table.
-//   2. If that's not found, fall back to looking for an INDOOR/OUTDOOR
-//      section heading whose orientation matches our prefix (CS/S =
-//      indoor, CU/U = outdoor).
-//   3. End the slice at whichever comes first: a heading mentioning a
-//      different model, or the opposite-orientation section header.
+//   1. Skip lines that look like table-of-contents entries (lots of dots
+//      followed by a page number) — these are present at the top of every
+//      service manual and would otherwise trap us in the TOC.
+//   2. Find the first non-TOC line containing our exact model code.
+//      That's typically the section header for our model's parts table.
+//   3. If not found, fall back to an INDOOR/OUTDOOR section heading whose
+//      orientation matches our prefix.
+//   4. End the slice at whichever comes first: the next non-TOC mention
+//      of a *different* same-family model (e.g. CU-RZ35AKR after our
+//      CU-RZ25AKR), the opposite-orientation section header, or end of doc.
 //
 // Returns null if no reliable scoping point can be found — caller falls
 // back to scanning the whole document.
@@ -782,29 +784,43 @@ export function scopeToModelSection(text: string, modelNumber: string): string |
   const ourSection = isOutdoor ? 'OUTDOOR' : 'INDOOR';
   const otherSection = isOutdoor ? 'INDOOR' : 'OUTDOOR';
 
-  // Step 1: find the first line containing our exact model code.
-  let start = upperLines.findIndex((l) => l.includes(target));
+  const findNonTocOccurrence = (predicate: (line: string) => boolean): number => {
+    for (let i = 0; i < upperLines.length; i++) {
+      if (looksLikeTocEntry(lines[i]!)) continue;
+      if (predicate(upperLines[i]!)) return i;
+    }
+    return -1;
+  };
 
-  // Step 2: fall back to INDOOR/OUTDOOR section headings.
+  let start = findNonTocOccurrence((l) => l.includes(target));
+
   if (start < 0) {
-    start = upperLines.findIndex(
+    start = findNonTocOccurrence(
       (l) => l.includes(ourSection) && (l.includes('UNIT') || l.includes('PARTS')),
     );
   }
   if (start < 0) return null;
 
-  // Step 3: find where this model's section ends.
   let end = lines.length;
+  // Look for the next sibling-model header (e.g. CU-RZ35AKR after our
+  // CU-RZ25AKR) that ISN'T a TOC entry. Same prefix, same suffix family,
+  // different capacity.
+  const sameFamilyModelRe = new RegExp(
+    `\\b${decoded.prefix}-${decoded.series}\\d+${decoded.suffix}\\b`,
+    'gi',
+  );
   for (let i = start + 1; i < upperLines.length; i++) {
+    const lineRaw = lines[i]!;
+    if (looksLikeTocEntry(lineRaw)) continue;
     const l = upperLines[i]!;
 
-    // A heading mentioning the opposite-orientation section
+    // Opposite-orientation section heading
     if (l.includes(otherSection) && (l.includes('UNIT') || l.includes('PARTS'))) {
       end = i;
       break;
     }
 
-    // A model code with a different prefix to ours
+    // Model code with different prefix
     const otherModelRe = /\b(CS|CU|S|U)-[A-Z0-9]/g;
     let m: RegExpExecArray | null;
     let foundDifferent = false;
@@ -818,9 +834,27 @@ export function scopeToModelSection(text: string, modelNumber: string): string |
       end = i;
       break;
     }
+
+    // Sibling model in the same family with a different capacity
+    sameFamilyModelRe.lastIndex = 0;
+    let n: RegExpExecArray | null;
+    while ((n = sameFamilyModelRe.exec(l)) !== null) {
+      if (n[0]!.toUpperCase() !== target) {
+        end = i;
+        break;
+      }
+    }
+    if (end === i) break;
   }
 
   return lines.slice(start, end).join('\n');
+}
+
+// Crude TOC-entry detector: a line with five or more dots in a row is
+// almost certainly a "Section X. Whatever .......... 123" TOC entry,
+// because no real prose or parts-table row uses that many dots together.
+function looksLikeTocEntry(line: string): boolean {
+  return /\.{5,}/.test(line);
 }
 
 // Real Panasonic part numbers tend to be 7+ chars with at least 3 digits
