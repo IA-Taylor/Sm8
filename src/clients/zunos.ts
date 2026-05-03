@@ -131,12 +131,18 @@ export function createZunosClient(cfg: Config): ZunosClient {
             return null;
           }
 
-          log(`running search for "${modelNumber}"`);
+          log(`tiered-searching for "${modelNumber}"`);
+          let resultCount = 0;
           try {
-            await runSearch(page, modelNumber);
+            resultCount = await tieredSearch(page, modelNumber);
           } catch (err) {
-            log(`runSearch failed: ${err}`);
+            log(`tieredSearch failed: ${err}`);
             await dumpDiagnostic(page, 'search-failed');
+            return null;
+          }
+          if (resultCount === 0) {
+            log(`no PDF results for any search tier of "${modelNumber}"`);
+            await dumpDiagnostic(page, 'no-results-any-tier');
             return null;
           }
 
@@ -321,6 +327,8 @@ async function navigateToSearch(page: Page): Promise<void> {
 }
 
 async function runSearch(page: Page, query: string): Promise<void> {
+  // Clear any existing search text first so this query replaces it.
+  await page.fill(SELECTORS.searchInput, '');
   await page.fill(SELECTORS.searchInput, query);
 
   // Zunos requires clicking the "Search" text in the top-right of the search
@@ -344,6 +352,71 @@ async function runSearch(page: Page, query: string): Promise<void> {
   // Some result types load asynchronously, so give the page a beat to render.
   await page.waitForLoadState('networkidle');
   await page.waitForTimeout(2000);
+}
+
+// Search Zunos in tiers, broadening the query if narrower ones return
+// nothing. Stops at the first tier that yields PDF results.
+//
+// For CU-RZ25AKR:
+//   tier 1: "CU-RZ25AKR"   (exact)
+//   tier 2: "RZ25AKR"      (drop the prefix — Zunos doc titles often do)
+//   tier 3: "RZ AKR"       (series + suffix, family search)
+async function tieredSearch(page: Page, modelNumber: string): Promise<number> {
+  const tiers = buildSearchTiers(modelNumber);
+  for (const query of tiers) {
+    log(`searching: "${query}"`);
+    await runSearch(page, query);
+    const count = (await page.$$(SELECTORS.resultPdfTile)).length;
+    log(`  -> ${count} PDF result(s)`);
+    if (count > 0) return count;
+  }
+  return 0;
+}
+
+export function buildSearchTiers(modelNumber: string): string[] {
+  const tiers = new Set<string>();
+  tiers.add(modelNumber);
+
+  const noPrefix = modelNumber.replace(/^[A-Z]+-/, '');
+  if (noPrefix !== modelNumber) tiers.add(noPrefix);
+
+  const decoded = decodeModelStructure(modelNumber);
+  if (decoded) {
+    tiers.add(`${decoded.series} ${decoded.suffix}`);
+  }
+  return [...tiers];
+}
+
+// Parse a Panasonic model number into structured parts.
+//   CU-RZ25AKR  -> { prefix: 'CU', series: 'RZ', capacity: 25, suffix: 'AKR' }
+//   CS-RZ50TKR  -> { prefix: 'CS', series: 'RZ', capacity: 50, suffix: 'TKR' }
+//   S-160PE1R5A -> { prefix: 'S',  series: '',   capacity: 160, suffix: 'PE1R5A' }
+//   U-160PE2R8A -> { prefix: 'U',  series: '',   capacity: 160, suffix: 'PE2R8A' }
+export function decodeModelStructure(modelNumber: string):
+  | { prefix: string; series: string; capacity: number; suffix: string }
+  | null {
+  const m = /^(?:([A-Z]+)-)?([A-Z]*?)(\d+)([A-Z][A-Z0-9]*)$/.exec(modelNumber.toUpperCase());
+  if (!m) return null;
+  return {
+    prefix: m[1] ?? '',
+    series: m[2] ?? '',
+    capacity: parseInt(m[3]!, 10),
+    suffix: m[4]!,
+  };
+}
+
+// Extract a coverage range from a doc title like "S-60-140PE1R5A".
+// The document covers capacities lo..hi inclusive.
+export function parseCoverageRange(title: string): { lo: number; hi: number } | null {
+  // Want the first hyphen-separated number pair where both numbers look like
+  // capacity codes (multiples of 5 or common values).
+  const m = title.match(/(\d{2,3})\s*-\s*(\d{2,3})/);
+  if (!m) return null;
+  const lo = parseInt(m[1]!, 10);
+  const hi = parseInt(m[2]!, 10);
+  // Sanity: real capacities are 25..600 kW
+  if (lo < 10 || hi < 10 || lo > 1000 || hi > 1000 || lo >= hi) return null;
+  return { lo, hi };
 }
 
 // Score each PDF result by how service-manual-looking its title is, click
@@ -396,28 +469,59 @@ async function pickAndOpenBestPdf(
 }
 
 // Higher score = more likely to be the right document for finding parts.
+//
+// Implements the playbook's ranking:
+//   doc type (Exploded View > Service Manual > Parts Change > Install > Operating)
+// × coverage match (target capacity must fall within title's range)
+// × series + suffix match (RZ25-80TKR ≠ RZ25-80AKR — different generations)
 export function scorePdfTitle(title: string, partType: string, modelNumber = ''): number {
   const t = title.toLowerCase();
-  const m = modelNumber.toLowerCase();
   let score = 0;
 
-  // STRONG signal: title mentions the specific model number.
-  // Without this, results that just match the family are too easy to misread.
-  if (m && t.includes(m)) {
-    score += 20;
-  } else if (m) {
-    // Partial: e.g. "RZ25AKR" inside a title like "RZ Series Service Manual"
-    const modelCore = m.replace(/^[a-z]+-/, ''); // CU-RZ25AKR -> rz25akr
-    if (modelCore && t.includes(modelCore)) score += 8;
+  // --- Document type ---
+  if (t.includes('exploded view') && t.includes('parts list')) score += 50;
+  else if (t.includes('exploded views') && t.includes('parts list')) score += 50;
+  else if (t.includes('exploded') || t.includes('parts list')) score += 40;
+  else if (t.includes('service manual')) score += 30;
+  else if (t.includes('technical data')) score += 25;
+  else if (t.includes('parts change') || t.includes('parts notice')) score += 15;
+  else if (t.includes('installation')) score += 5;
+  else if (t.includes('operating')) score -= 20;
+  else if (t.includes('brochure') || t.includes('catalogue')) score -= 10;
+
+  // --- Coverage range check (the trap that catches everyone) ---
+  const decoded = decodeModelStructure(modelNumber);
+  const range = parseCoverageRange(title);
+  if (range && decoded) {
+    if (decoded.capacity >= range.lo && decoded.capacity <= range.hi) {
+      score += 25;
+    } else {
+      // Out of range: this doc covers different capacities. Strongly negative
+      // so it can't accidentally win.
+      score -= 100;
+    }
   }
 
-  if (t.includes('spare parts') || t.includes('parts list')) score += 10;
-  if (t.includes('service manual')) score += 8;
+  // --- Series + suffix exact-match ---
+  if (decoded) {
+    const seriesLower = decoded.series.toLowerCase();
+    const suffixLower = decoded.suffix.toLowerCase();
+    if (seriesLower && t.includes(seriesLower) && t.includes(suffixLower)) score += 15;
+    else if (suffixLower && t.includes(suffixLower)) score += 8;
+  }
+
+  // --- Direct model match (strongest signal when present) ---
+  const lowerModel = modelNumber.toLowerCase();
+  if (lowerModel && t.includes(lowerModel)) {
+    score += 20;
+  } else if (lowerModel) {
+    const noPrefix = lowerModel.replace(/^[a-z]+-/, '');
+    if (noPrefix !== lowerModel && t.includes(noPrefix)) score += 12;
+  }
+
+  // --- Mentions the specific part type the customer asked about ---
   if (t.includes(partType.toLowerCase())) score += 5;
-  if (t.includes('service')) score += 3;
-  if (t.includes('manual')) score += 2;
-  if (t.includes('install')) score -= 2;
-  if (t.includes('brochure') || t.includes('catalogue')) score -= 4;
+
   return score;
 }
 
@@ -544,32 +648,51 @@ function isPlausiblePartNumber(candidate: string, partKeywords: string[]): boole
   return true;
 }
 
+// Customer wording → parts-table entry aliases. Mirrors the lookup table
+// in the playbook. Lower-case keys, upper-case parts-table phrases.
+const PART_TYPE_ALIASES: Record<string, string[]> = {
+  pcb: [
+    'PCB ASSEMBLY',
+    'PC BOARD W/COMPONENT',
+    'MAIN PCB',
+    'ELEC.CONTROLLER',
+    'ELECTRONIC CONTROLLER',
+    'PRINTED CIRCUIT',
+    'PCB ASSY',
+  ],
+  'circuit board': ['PCB ASSEMBLY', 'PC BOARD W/COMPONENT', 'MAIN PCB', 'PRINTED CIRCUIT'],
+  'main board': ['MAIN PCB', 'PC BOARD W/COMPONENT', 'PCB ASSEMBLY'],
+  'control board': ['ELEC.CONTROLLER', 'ELECTRONIC CONTROLLER', 'CONTROL PCB'],
+  'inverter board': ['MAIN PCB', 'INVERTER CONTROLLER', 'INVERTER PCB'],
+  board: [
+    'PCB ASSEMBLY',
+    'PC BOARD W/COMPONENT',
+    'MAIN PCB',
+    'ELEC.CONTROLLER',
+    'INVERTER CONTROLLER',
+  ],
+  'wall bracket': ['INSTALLATION PLATE', 'WALL HANG PLATE', 'BACK PLATE'],
+  'mounting plate': ['INSTALLATION PLATE', 'WALL HANG PLATE'],
+  'back plate': ['INSTALLATION PLATE', 'WALL HANG PLATE'],
+  'condenser coil': ['CONDENSER', 'FIN & TUBE CONDENSER COMPLETE'],
+  coil: ['CONDENSER', 'FIN & TUBE'],
+  'fan motor': ['INDOOR FAN MOTOR', 'CROSS FLOW FAN MOTOR', 'DC MOTOR', 'FAN MOTOR'],
+  fan: ['INDOOR FAN MOTOR', 'CROSS FLOW FAN MOTOR', 'DC MOTOR', 'FAN MOTOR'],
+  capacitor: ['CAPACITOR'],
+  compressor: ['COMPRESSOR', 'COMP.'],
+  sensor: ['SENSOR', 'THERMISTOR'],
+  thermistor: ['THERMISTOR', 'SENSOR'],
+  remote: ['REMOTE CONTROL UNIT', 'REMOTE CONTROL'],
+  filter: ['AIR FILTER', 'FILTER'],
+};
+
 function expandPartTypeKeywords(partType: string): string[] {
-  const t = partType.toUpperCase();
-  const variants = new Set<string>([t]);
-  if (t === 'PCB' || t.includes('CIRCUIT') || t.includes('BOARD')) {
-    variants.add('PCB');
-    variants.add('CIRCUIT BOARD');
-    variants.add('PRINTED CIRCUIT');
-    variants.add('CONTROL BOARD');
-    variants.add('MAIN BOARD');
-    variants.add('ELECTRONIC CONTROLLER');
-  }
-  if (t.includes('FAN')) {
-    variants.add('FAN MOTOR');
-    variants.add('FAN');
-  }
-  if (t.includes('CAPACITOR')) {
-    variants.add('CAPACITOR');
-    variants.add('CAP.');
-  }
-  if (t.includes('COMPRESSOR')) {
-    variants.add('COMPRESSOR');
-    variants.add('COMP.');
-  }
-  if (t.includes('SENSOR') || t.includes('THERMISTOR')) {
-    variants.add('SENSOR');
-    variants.add('THERMISTOR');
+  const t = partType.toLowerCase().trim();
+  const variants = new Set<string>([t.toUpperCase()]);
+  for (const [key, aliases] of Object.entries(PART_TYPE_ALIASES)) {
+    if (t === key || t.includes(key)) {
+      for (const a of aliases) variants.add(a.toUpperCase());
+    }
   }
   return [...variants];
 }
