@@ -106,20 +106,24 @@ export function createEpanClient(cfg: Config): EpanClient {
         const greenCells = await page.locator('td.HGREEN').allTextContents();
         const cyanCells = await page.locator('td.HCYAN').allTextContents();
 
-        // We want the recommended retail price including tax — that's what
-        // gets quoted to a customer. "Price extax" is the wholesale cost.
-        const priceText = findValueAfterLabel(greenCells, 'Rec Rtl inc tax');
+        //   "Rec Rtl inc tax"  → retail price the customer is quoted (with GST)
+        //   "Price extax"      → wholesale cost we pay (without GST)
+        // We capture both so the SM8 task can show the tech their margin.
+        const retailText = findValueAfterLabel(greenCells, 'Rec Rtl inc tax');
+        const costText = findValueAfterLabel(greenCells, 'Price extax');
         const stockText = findValueAfterLabel(cyanCells, 'Available');
         const internalId =
           (await page.inputValue(SELECTORS.productInternalId).catch(() => '')) || sku.toUpperCase();
 
-        const price = parsePrice(priceText);
-        if (!isFinite(price) || price === 0) {
+        const retailPriceIncTax = parsePrice(retailText);
+        const costPriceExTax = parsePrice(costText);
+        if (!isFinite(retailPriceIncTax) || retailPriceIncTax === 0) {
           await dumpDiagnostics(page, 'lookup-bad-price');
           console.error(
-            `[epan.lookup] reached DLPR501 but could not parse a valid price.\n` +
-              `  priceText: ${JSON.stringify(priceText)}\n` +
-              `  stockText: ${JSON.stringify(stockText)}\n` +
+            `[epan.lookup] reached DLPR501 but could not parse a valid retail price.\n` +
+              `  retailText: ${JSON.stringify(retailText)}\n` +
+              `  costText:   ${JSON.stringify(costText)}\n` +
+              `  stockText:  ${JSON.stringify(stockText)}\n` +
               `  internalId: ${JSON.stringify(internalId)}\n` +
               `  all HGREEN cell texts: ${JSON.stringify(greenCells)}\n` +
               `  all HCYAN cell texts:  ${JSON.stringify(cyanCells)}\n` +
@@ -131,7 +135,8 @@ export function createEpanClient(cfg: Config): EpanClient {
         return {
           internalId: internalId.trim(),
           productUrl: page.url(),
-          price,
+          retailPriceIncTax,
+          costPriceExTax: isFinite(costPriceExTax) ? costPriceExTax : 0,
           stock: parseStock(stockText),
           currency: 'AUD',
         };

@@ -28,9 +28,11 @@ interface PendingEntity extends TableEntity {
   description: string;
   qty: number;
   epan_internal_id: string | null;
-  epan_price: number | null;
+  epan_retail_price_inc_tax: number | null;
+  epan_cost_price_ex_tax: number | null;
   epan_stock: number | null;
   sm8_task_uuid: string | null;
+  job_reference_for_epan: string;
   status: PendingStatus;
   epan_order_ref?: string;
   ttl: number;
@@ -44,9 +46,11 @@ function entityToPending(e: PendingEntity): PendingOrder {
     description: e.description,
     qty: e.qty,
     epan_internal_id: e.epan_internal_id,
-    epan_price: e.epan_price,
+    epan_retail_price_inc_tax: e.epan_retail_price_inc_tax,
+    epan_cost_price_ex_tax: e.epan_cost_price_ex_tax,
     epan_stock: e.epan_stock,
     sm8_task_uuid: e.sm8_task_uuid,
+    job_reference_for_epan: e.job_reference_for_epan,
     status: e.status,
     ...(e.epan_order_ref !== undefined ? { epan_order_ref: e.epan_order_ref } : {}),
     ttl: e.ttl,

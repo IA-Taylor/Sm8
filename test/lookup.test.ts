@@ -37,7 +37,8 @@ describe('runLookup', () => {
       lookup: vi.fn().mockResolvedValue({
         internalId: 'CWA73C0001',
         productUrl: 'https://e-pan/product',
-        price: 152.5,
+        retailPriceIncTax: 152.5,
+        costPriceExTax: 90.0,
         stock: 3,
         currency: 'AUD',
       }),
@@ -45,7 +46,11 @@ describe('runLookup', () => {
     };
     sm8 = {
       verifyWebhook: () => true,
-      getJob: vi.fn(),
+      getJob: vi.fn().mockResolvedValue({
+        uuid: 'job-1',
+        company_uuid: 'co-1',
+        generated_job_id: '1234',
+      }),
       createTask: vi.fn().mockResolvedValue({ taskUuid: 'task-1' }),
       closeTask: vi.fn(),
       postNote: vi.fn().mockResolvedValue({ activityUuid: 'a-1' }),

@@ -34,9 +34,11 @@ const samplePending: PendingOrder = {
   description: 'Widget',
   qty: 2,
   epan_internal_id: 'p-9001',
-  epan_price: 42.5,
+  epan_retail_price_inc_tax: 42.5,
+  epan_cost_price_ex_tax: 25.0,
   epan_stock: 7,
   sm8_task_uuid: 'task-1',
+  job_reference_for_epan: '1234',
   status: 'awaiting_confirmation',
   ttl: 1,
 };
@@ -68,7 +70,7 @@ describe('runOrder', () => {
     expect(epan.placeOrder).toHaveBeenCalledWith({
       internalId: 'p-9001',
       qty: 2,
-      jobReference: 'job-1',
+      jobReference: '1234',
     });
     expect(sm8.closeTask).toHaveBeenCalledWith('task-1');
     expect(sm8.postNote).toHaveBeenCalled();

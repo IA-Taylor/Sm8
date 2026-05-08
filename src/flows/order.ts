@@ -53,7 +53,10 @@ export async function runOrder(deps: OrderDeps, input: OrderInput): Promise<Orde
   const result = await epan.placeOrder({
     internalId: pending.epan_internal_id,
     qty: pending.qty,
-    jobReference: pending.job_uuid,
+    // Use the human-readable SM8 job number captured at quote time
+    // (e.g. "1234" rather than the 36-char UUID). Falls back to a
+    // UUID-prefix if the SM8 job didn't have one.
+    jobReference: pending.job_reference_for_epan || pending.job_uuid.slice(0, 8),
   });
 
   await store.markStatus(pending.job_uuid, pending.created_at, 'ordered', result.epanOrderRef);

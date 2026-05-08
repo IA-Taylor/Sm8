@@ -17,7 +17,8 @@ export interface ZunosPart {
 export interface EpanQuote {
   internalId: string;
   productUrl: string;
-  price: number;
+  retailPriceIncTax: number;
+  costPriceExTax: number;
   stock: number;
   currency: string;
 }
@@ -36,9 +37,14 @@ export interface PendingOrder {
   description: string;
   qty: number;
   epan_internal_id: string | null;
-  epan_price: number | null;
+  epan_retail_price_inc_tax: number | null;
+  epan_cost_price_ex_tax: number | null;
   epan_stock: number | null;
   sm8_task_uuid: string | null;
+  // Human-readable SM8 job number (e.g. "1234"). Used as the customer
+  // order reference when placing the order on EPAN. Falls back to the
+  // first 8 chars of job_uuid if the SM8 job lookup couldn't supply it.
+  job_reference_for_epan: string;
   status: PendingStatus;
   epan_order_ref?: string;
   ttl: number;

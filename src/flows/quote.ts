@@ -22,6 +22,15 @@ export interface QuoteInput {
 export async function runQuote(deps: QuoteDeps, input: QuoteInput): Promise<PendingOrder> {
   const { zunos, epan, sm8, store, botStaffUuid } = deps;
 
+  // Fetch the human-readable SM8 job number so we can stamp it onto the
+  // EPAN order as the customer reference. Falls back to the first 8 chars
+  // of the UUID if SM8's API doesn't return a generated id.
+  const job = await sm8.getJob(input.jobUuid).catch((err) => {
+    console.error('SM8 getJob failed', err);
+    return null;
+  });
+  const jobReferenceForEpan = job?.generated_job_id?.trim() || input.jobUuid.slice(0, 8);
+
   const zunosHit = await zunos.searchPart(input.partNumber).catch((err) => {
     console.error('Zunos search failed', err);
     return null;
@@ -44,9 +53,14 @@ export async function runQuote(deps: QuoteDeps, input: QuoteInput): Promise<Pend
       `Reply "Kevin yes please order this part on EPAN" to retry the order.`;
   } else {
     status = 'awaiting_confirmation';
+    const margin = quote.retailPriceIncTax - quote.costPriceExTax;
     taskBody =
-      `Confirm order: ${description} (qty ${input.qty}) ` +
-      `@ $${quote.price.toFixed(2)} ${quote.currency}, EPAN stock ${quote.stock}. ` +
+      `Confirm order: ${description} (SKU ${sku}, qty ${input.qty})\n` +
+      `  Retail price (inc GST): $${quote.retailPriceIncTax.toFixed(2)} ${quote.currency}\n` +
+      `  Buy price (ex GST):     $${quote.costPriceExTax.toFixed(2)} ${quote.currency}\n` +
+      (margin > 0 ? `  Margin (approx, ex/inc GST mix): $${margin.toFixed(2)}\n` : '') +
+      `  EPAN stock: ${quote.stock}\n` +
+      `  EPAN order reference will be: ${jobReferenceForEpan}\n` +
       `Reply "Kevin yes please order this part on EPAN" to proceed.`;
   }
 
@@ -62,9 +76,11 @@ export async function runQuote(deps: QuoteDeps, input: QuoteInput): Promise<Pend
     description,
     qty: input.qty,
     epan_internal_id: quote?.internalId ?? null,
-    epan_price: quote?.price ?? null,
+    epan_retail_price_inc_tax: quote?.retailPriceIncTax ?? null,
+    epan_cost_price_ex_tax: quote?.costPriceExTax ?? null,
     epan_stock: quote?.stock ?? null,
     sm8_task_uuid: taskUuid,
+    job_reference_for_epan: jobReferenceForEpan,
     status,
   });
 }
