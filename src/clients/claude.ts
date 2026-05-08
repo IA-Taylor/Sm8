@@ -40,10 +40,12 @@ const MODEL = 'claude-haiku-4-5-20251001';
 // judgement.
 const WEB_SEARCH_MODEL = 'claude-haiku-4-5-20251001';
 
-// Cap how much PDF text we send. 60k chars (~15k tokens) is a comfortable
-// window and keeps cost predictable; service-manual parts lists are
-// typically 1-3k lines, so a smartly-sliced window covers the model fully.
-const MAX_TEXT_CHARS = 60_000;
+// Cap how much PDF text we send. 25k chars (~6k tokens) keeps the request
+// inside Anthropic's Tier-1 rate limit of 10k input tokens/min while still
+// being a generous window — service-manual parts tables for one model are
+// typically a few hundred lines, so a smartly-sliced window centred on
+// the model's parts-table section covers it fully.
+const MAX_TEXT_CHARS = 25_000;
 
 const SYSTEM_PROMPT = `You are a parts-lookup assistant for a Panasonic AC trade supplier.
 Given the extracted text of a Panasonic service manual, find the exact
