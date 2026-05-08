@@ -332,9 +332,22 @@ export function sliceTextAroundModel(
 }
 
 function stripMarkdownFence(s: string): string {
-  // Claude sometimes wraps JSON in ```json ... ``` despite being told not to.
-  return s
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/```\s*$/i, '')
-    .trim();
+  // Claude often wraps the JSON in ```json ... ``` and may include prose
+  // before/after the fence. Try, in order:
+  //   1. extract the JSON inside a ```json fenced block
+  //   2. extract the JSON inside any ``` fenced block
+  //   3. fall back to the last { ... } object in the reply
+  //   4. give back the raw string and let the caller's JSON.parse fail
+  const fenced =
+    /```json\s*([\s\S]*?)\s*```/i.exec(s) ?? /```\s*([\s\S]*?)\s*```/.exec(s);
+  if (fenced) return fenced[1]!.trim();
+
+  // Greedy match for the largest { ... } in the reply (handles nested braces).
+  const firstBrace = s.indexOf('{');
+  const lastBrace = s.lastIndexOf('}');
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    return s.slice(firstBrace, lastBrace + 1).trim();
+  }
+
+  return s.trim();
 }
