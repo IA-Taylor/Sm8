@@ -1,5 +1,6 @@
 import { app, type HttpRequest, type HttpResponseInit, type InvocationContext } from '@azure/functions';
 import { classifyNote } from './classify.js';
+import { createClaudeClient } from './clients/claude.js';
 import { createEpanClient } from './clients/epan.js';
 import { createServiceM8Client } from './clients/servicem8.js';
 import { createZunosClient } from './clients/zunos.js';
@@ -44,6 +45,7 @@ export async function sm8Webhook(
     return { status: 200, body: 'ignored' };
   }
 
+  const claude = createClaudeClient(cfg);
   const zunos = createZunosClient(cfg);
   const epan = createEpanClient(cfg);
   const store = createStore(cfg.storageAccountName, cfg.pendingOrdersTable);
@@ -61,7 +63,7 @@ export async function sm8Webhook(
       );
     } else if (decision.kind === 'lookup') {
       await runLookup(
-        { zunos, epan, sm8, store, botStaffUuid: cfg.sm8BotStaffUuid },
+        { claude, zunos, epan, sm8, store, botStaffUuid: cfg.sm8BotStaffUuid },
         {
           jobUuid: payload.job_uuid,
           modelNumber: decision.modelNumber,

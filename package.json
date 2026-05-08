@@ -13,7 +13,8 @@
     "start": "func start",
     "epan:lookup": "tsx scripts/epan-lookup.ts",
     "epan:order": "tsx scripts/epan-order.ts",
-    "zunos:lookup": "tsx scripts/zunos-lookup.ts"
+    "zunos:lookup": "tsx scripts/zunos-lookup.ts",
+    "web:lookup": "tsx scripts/web-lookup.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",

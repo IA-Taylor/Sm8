@@ -9,7 +9,7 @@ The bot is named **Kevin**. He only responds when the note starts with his name 
 | Note (case-insensitive)                                          | Bot does                                                          |
 | ---------------------------------------------------------------- | ----------------------------------------------------------------- |
 | `Kevin order CWA43C2467`                                         | Looks the part up on EPAN for price + stock, creates a To-Do on the job asking for confirmation. |
-| `Kevin can you find a PCB for a CU-RZ25AKR` (or similar natural-language model lookup) | Logs into Zunos, searches for the model, picks the most service/parts-manual-looking PDF, extracts the part number for the requested part type, then runs the EPAN price/stock + To-Do flow. |
+| `Kevin can you find a PCB for a CU-RZ25AKR` (or similar natural-language model lookup) | Asks Claude (with the web_search tool) to find the part number from public sources (Panasonic site, parts catalogues, manualslib, etc.), then runs the EPAN price/stock + To-Do flow. The To-Do also notes the source URL and Claude's confidence so techs can verify before confirming. |
 | `Kevin yes please order this part on EPAN`                       | Places the previously-quoted order on EPAN, closes the To-Do, and posts a confirmation note with the EPAN order reference. |
 | Anything else, including `order ABC-123` without "Kevin"         | Ignored.                                                          |
 
