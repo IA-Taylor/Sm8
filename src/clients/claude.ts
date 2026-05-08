@@ -32,10 +32,13 @@ export interface ClaudeClient {
 // text sizes we're sending.
 const MODEL = 'claude-haiku-4-5-20251001';
 
-// Web search benefits from a more careful reasoning model — it has to
-// judge which search result is the right manual for the right model
-// generation/capacity, then read it. Sonnet 4.6 hits the sweet spot.
-const WEB_SEARCH_MODEL = 'claude-sonnet-4-6';
+// We use Haiku for web search too. Sonnet is sharper at result judgement
+// but its per-tier input-token rate limit is too tight on the Anthropic
+// free/Tier-1 account (10k tok/min) to handle realistic web-search
+// payloads. Haiku has much more headroom and is cheaper. Reasoning
+// quality is fine for "is this the right Panasonic manual?" -level
+// judgement.
+const WEB_SEARCH_MODEL = 'claude-haiku-4-5-20251001';
 
 // Cap how much PDF text we send. 60k chars (~15k tokens) is a comfortable
 // window and keeps cost predictable; service-manual parts lists are
