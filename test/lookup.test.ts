@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { runLookup } from '../src/flows/lookup.js';
-import type { ClaudeClient } from '../src/clients/claude.js';
 import type { EpanClient } from '../src/clients/epan.js';
 import type { ServiceM8Client } from '../src/clients/servicem8.js';
 import type { ZunosClient } from '../src/clients/zunos.js';
@@ -24,23 +23,14 @@ function makeStore(): Store & { rows: PendingOrder[] } {
 }
 
 describe('runLookup', () => {
-  let claude: ClaudeClient;
   let zunos: ZunosClient;
   let epan: EpanClient;
   let sm8: ServiceM8Client;
   let store: ReturnType<typeof makeStore>;
 
   beforeEach(() => {
-    claude = {
-      findPartNumber: vi.fn().mockResolvedValue({
-        partNumber: null,
-        confidence: 'low',
-        reasoning: '',
-      }),
-      findPartNumberByWebSearch: vi.fn(),
-    };
     zunos = {
-      findPartInManual: vi.fn().mockResolvedValue(null),
+      findPartInManual: vi.fn(),
       searchPart: vi.fn().mockResolvedValue(null),
     };
     epan = {
@@ -63,57 +53,27 @@ describe('runLookup', () => {
     store = makeStore();
   });
 
-  it('happy path: Claude web search → part number → EPAN quote → task', async () => {
-    (claude.findPartNumberByWebSearch as ReturnType<typeof vi.fn>).mockResolvedValue({
-      partNumber: 'CWA73C0001',
-      confidence: 'high',
-      reasoning: 'Found in Panasonic CU-RZ25AKR Service Manual',
-      source: 'https://example.com/manual.pdf',
-    });
+  it('happy path: Zunos finds part number → EPAN quote → task created', async () => {
+    (zunos.findPartInManual as ReturnType<typeof vi.fn>).mockResolvedValue('CWA73C0001');
 
     const out = await runLookup(
-      { claude, zunos, epan, sm8, store },
+      { zunos, epan, sm8, store },
       { jobUuid: 'job-1', modelNumber: 'CU-RZ25AKR', partType: 'PCB', qty: 1 },
     );
 
     expect(out.kind).toBe('quoted');
-    expect(claude.findPartNumberByWebSearch).toHaveBeenCalledWith('CU-RZ25AKR', 'PCB');
+    expect(zunos.findPartInManual).toHaveBeenCalledWith('CU-RZ25AKR', 'PCB');
     expect(epan.lookup).toHaveBeenCalledWith('CWA73C0001');
     expect(sm8.createTask).toHaveBeenCalled();
     expect(store.rows).toHaveLength(1);
     expect(store.rows[0]!.sku).toBe('CWA73C0001');
   });
 
-  it('annotates the task with confidence + source after a successful quote', async () => {
-    (claude.findPartNumberByWebSearch as ReturnType<typeof vi.fn>).mockResolvedValue({
-      partNumber: 'CWA73C0001',
-      confidence: 'high',
-      reasoning: 'Found in service manual',
-      source: 'https://example.com/manual.pdf',
-    });
-
-    await runLookup(
-      { claude, zunos, epan, sm8, store },
-      { jobUuid: 'job-1', modelNumber: 'CU-RZ25AKR', partType: 'PCB', qty: 1 },
-    );
-
-    const noteCall = (sm8.postNote as ReturnType<typeof vi.fn>).mock.calls.find((args) =>
-      String(args[1]).includes('web search'),
-    );
-    expect(noteCall).toBeTruthy();
-    expect(String(noteCall![1])).toContain('high');
-    expect(String(noteCall![1])).toContain('example.com');
-  });
-
-  it('when Claude finds nothing, posts a clarification task and stores nothing', async () => {
-    (claude.findPartNumberByWebSearch as ReturnType<typeof vi.fn>).mockResolvedValue({
-      partNumber: null,
-      confidence: 'low',
-      reasoning: 'Could not find an authoritative source',
-    });
+  it('when Zunos finds nothing, posts a clarification task and stores nothing', async () => {
+    (zunos.findPartInManual as ReturnType<typeof vi.fn>).mockResolvedValue(null);
 
     const out = await runLookup(
-      { claude, zunos, epan, sm8, store },
+      { zunos, epan, sm8, store },
       { jobUuid: 'job-2', modelNumber: 'OBSCURE-MODEL', partType: 'PCB', qty: 1 },
     );
 
